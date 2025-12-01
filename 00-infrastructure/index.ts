@@ -4,9 +4,9 @@ import * as awsx from "@pulumi/awsx";
 import * as k8s from "@pulumi/kubernetes";
 import {SubnetType} from "@pulumi/awsx/ec2";
 import * as pulumiservice from "@pulumi/pulumiservice";
-import {AIModelComponent} from "./aiModelComponent";
 import {KarpenterNodePoolComponent} from "./karpenterNodePoolComponent";
 import {KServeComponent} from "./kserveComponent";
+import {LLMInferenceServiceComponent} from "./llmInferenceServiceComponent";
 
 const config = new pulumi.Config();
 const clusterName = config.require("clusterName");
@@ -240,10 +240,20 @@ values:
 
 export const escName = pulumi.interpolate`${environmentResource.project}/${environmentResource.name}`
 
-/*
-const qwenModel = new AIModelComponent("qwen3-coder-30b-a3b-instruct", {
-    size: "small",
-    modelName: "Qwen/Qwen3-Coder-30B-A3B-Instruct", //"openai/gpt-oss-20b",
-    monitoringEnabled: true,
-}, {provider: cluster.provider});
-*/
+// Deploy Qwen2.5-7B-Instruct using KServe LLMInferenceService
+const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
+    modelUri: "hf://Qwen/Qwen2.5-7B-Instruct",
+    modelName: "Qwen/Qwen2.5-7B-Instruct",
+    namespace: "default",
+    replicas: 1,
+    resources: {
+        cpuLimit: "4",
+        memoryLimit: "32Gi",
+        gpuCount: 1,
+        cpuRequest: "2",
+        memoryRequest: "16Gi",
+    },
+    nodeSelector: {
+        "node-type": "gpu",
+    },
+}, {provider: cluster.provider, dependsOn: [kserve]});
