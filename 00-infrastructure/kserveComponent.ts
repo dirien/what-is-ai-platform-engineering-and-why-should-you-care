@@ -3,10 +3,36 @@ import * as k8s from "@pulumi/kubernetes";
 
 /**
  * Deployment mode for KServe
- * - RawDeployment: Avoids installing Istio/Knative (simpler setup)
+ * - Standard: Avoids installing Istio/Knative (simpler setup)
  * - Serverless: Uses Knative for scale-to-zero capabilities
  */
-export type KServeDeploymentMode = "RawDeployment" | "Serverless";
+export type KServeDeploymentMode = "Standard" | "Serverless";
+
+/**
+ * Storage initializer resource configuration
+ */
+export interface StorageInitializerConfig {
+    /**
+     * Memory request for the storage initializer container
+     * @default "100Mi"
+     */
+    memoryRequest?: string;
+    /**
+     * Memory limit for the storage initializer container
+     * @default "1Gi"
+     */
+    memoryLimit?: string;
+    /**
+     * CPU request for the storage initializer container
+     * @default "100m"
+     */
+    cpuRequest?: string;
+    /**
+     * CPU limit for the storage initializer container
+     * @default "1"
+     */
+    cpuLimit?: string;
+}
 
 /**
  * Arguments for creating a KServe component
@@ -33,16 +59,17 @@ export interface KServeComponentArgs {
     deploymentMode?: KServeDeploymentMode;
 
     /**
-     * Whether to install the default ClusterServingRuntimes (HuggingFace, vLLM, etc.)
-     * @default true
-     */
-    installServingRuntimes?: boolean;
-
-    /**
      * Timeout in seconds for waiting for cert-manager pods to be ready
      * @default 90
      */
     certManagerReadyTimeout?: number;
+
+    /**
+     * Storage initializer resource configuration for the default ClusterStorageContainer
+     * The default ClusterStorageContainer handles hf://, s3://, gs://, etc.
+     * Increase memory limits for large model downloads (e.g., 16Gi for 7B+ models)
+     */
+    storageInitializer?: StorageInitializerConfig;
 }
 
 /**
@@ -50,7 +77,7 @@ export interface KServeComponentArgs {
  * - Cert-Manager (required for webhook certificates)
  * - KServe CRDs
  * - KServe Controller
- * - KServe Serving Runtimes (optional, enabled by default)
+ * - LLMInferenceService CRDs and resources
  *
  * Uses RawDeployment mode by default to avoid Istio/Knative dependencies.
  */
@@ -73,7 +100,12 @@ export class KServeComponent extends pulumi.ComponentResource {
     /**
      * The LLMInferenceService CRD Helm release (required for LLM features)
      */
-    public readonly llmisvCrd?: k8s.helm.v3.Release;
+    public readonly llmisvCrd: k8s.helm.v3.Release;
+
+    /**
+     * The LLMInferenceService resources Helm release (controller and runtimes for LLM features)
+     */
+    public readonly llmisvResources: k8s.helm.v3.Release;
 
     /**
      * The KServe namespace
@@ -86,7 +118,6 @@ export class KServeComponent extends pulumi.ComponentResource {
         const certManagerVersion = args.certManagerVersion ?? "v1.16.1";
         const kserveVersion = args.kserveVersion ?? "v0.16.0";
         const deploymentMode = args.deploymentMode ?? "RawDeployment";
-        const installServingRuntimes = args.installServingRuntimes ?? true;
 
         // Create cert-manager namespace
         const certManagerNamespace = new k8s.core.v1.Namespace(`${name}-cert-manager-ns`, {
@@ -128,6 +159,7 @@ export class KServeComponent extends pulumi.ComponentResource {
             namespace: this.kserveNamespace.metadata.name,
         }, { parent: this, dependsOn: [this.certManager, this.kserveNamespace] });
 
+
         // Install KServe Controller
         this.kserve = new k8s.helm.v3.Release(`${name}-kserve`, {
             name: "kserve",
@@ -138,27 +170,74 @@ export class KServeComponent extends pulumi.ComponentResource {
                 kserve: {
                     controller: {
                         deploymentMode: deploymentMode,
-                    },
+                    }
                 },
             },
         }, { parent: this, dependsOn: [this.kserveCrd] });
 
         // Install LLMInferenceService CRDs (required for LLM features in v0.16+)
-        // The kserve helm chart already includes ClusterServingRuntimes for all supported frameworks
-        if (installServingRuntimes) {
-            this.llmisvCrd = new k8s.helm.v3.Release(`${name}-llmisvc-crd`, {
-                name: "llmisvc-crd",
-                chart: "oci://ghcr.io/kserve/charts/llmisvc-crd",
-                version: kserveVersion,
-                namespace: this.kserveNamespace.metadata.name,
-            }, { parent: this, dependsOn: [this.kserve] });
-        }
+        this.llmisvCrd = new k8s.helm.v3.Release(`${name}-llmisvc-crd`, {
+            name: "llmisvc-crd",
+            chart: "oci://ghcr.io/kserve/charts/llmisvc-crd",
+            version: kserveVersion,
+            namespace: this.kserveNamespace.metadata.name,
+        }, { parent: this, dependsOn: [this.kserve] });
+
+        // Install LLMInferenceService resources (controller and runtimes)
+        this.llmisvResources = new k8s.helm.v3.Release(`${name}-llmisvc-resources`, {
+            name: "llmisvc-resources",
+            chart: "oci://ghcr.io/kserve/charts/llmisvc-resources",
+            version: kserveVersion,
+            namespace: this.kserveNamespace.metadata.name,
+            skipCrds: true,
+        }, { parent: this, dependsOn: [this.llmisvCrd] });
+
+        // Patch the inferenceservice-config ConfigMap with storage initializer settings
+        // This overrides the defaults set by the llmisvc-resources Helm chart
+        const storageInitializerConfig = new k8s.core.v1.ConfigMapPatch(
+            `${name}-storage-initializer-config`,
+            {
+                metadata: {
+                    name: "inferenceservice-config",
+                    namespace: this.kserveNamespace.metadata.name,
+                    annotations: {
+                        "pulumi.com/patchForce": "true",
+                    },
+                },
+                data: {
+                    storageInitializer: JSON.stringify({
+                        image: "kserve/storage-initializer:latest",
+                        memoryRequest: args.storageInitializer?.memoryRequest ?? "100Mi",
+                        memoryLimit: args.storageInitializer?.memoryLimit ?? "1Gi",
+                        cpuRequest: args.storageInitializer?.cpuRequest ?? "100m",
+                        cpuLimit: args.storageInitializer?.cpuLimit ?? "1",
+                        // Preserve other required fields
+                        caBundleConfigMapName: "",
+                        caBundleVolumeMountPath: "/etc/ssl/custom-certs",
+                        enableModelcar: true,
+                        cpuModelcar: "10m",
+                        memoryModelcar: "15Mi",
+                        uidModelcar: 1010,
+                    }),
+                },
+            },
+            {
+                parent: this,
+                dependsOn: [this.llmisvResources],
+            }
+        );
+
+        // Note: Storage initializer resources are configured via kserve.storage.resources in the Helm values
+        // The default ClusterStorageContainer (created by kserve chart) handles hf://, s3://, gs://, etc.
+        // HuggingFace authentication requires a separate secret with HF_TOKEN environment variable
+        // See: https://kserve.github.io/website/docs/model-serving/storage/storage-containers
 
         this.registerOutputs({
             certManagerReleaseName: this.certManager.name,
             kserveCrdReleaseName: this.kserveCrd.name,
             kserveReleaseName: this.kserve.name,
-            kserveResourcesInstalled: installServingRuntimes,
+            llmisvCrdReleaseName: this.llmisvCrd.name,
+            llmisvResourcesReleaseName: this.llmisvResources.name,
             kserveNamespaceName: this.kserveNamespace.metadata.name,
         });
     }
