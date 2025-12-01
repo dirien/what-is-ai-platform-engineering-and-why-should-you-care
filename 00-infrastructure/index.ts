@@ -6,7 +6,7 @@ import {SubnetType} from "@pulumi/awsx/ec2";
 import * as pulumiservice from "@pulumi/pulumiservice";
 import {KarpenterNodePoolComponent} from "./karpenterNodePoolComponent";
 import {KServeComponent} from "./kserveComponent";
-import {LLMInferenceServiceComponent} from "./llmInferenceServiceComponent";
+import {LLMInferenceServiceComponent, HuggingFaceStorageContainerComponent} from "./llmInferenceServiceComponent";
 
 const config = new pulumi.Config();
 const clusterName = config.require("clusterName");
@@ -240,6 +240,24 @@ values:
 
 export const escName = pulumi.interpolate`${environmentResource.project}/${environmentResource.name}`
 
+// Create HuggingFace secret for model downloads
+// The secret must contain HF_TOKEN key (not 'token')
+const huggingFaceSecret = new k8s.core.v1.Secret("hf-secret", {
+    metadata: {
+        name: "hf-secret",
+        namespace: "default",
+    },
+    stringData: {
+        HF_TOKEN: config.requireSecret("huggingface-token"),
+    },
+}, {provider: cluster.provider});
+
+// Configure ClusterStorageContainer to enable hf:// URI authentication
+const hfStorageContainer = new HuggingFaceStorageContainerComponent("hf-storage", {
+    secretName: huggingFaceSecret.metadata.name,
+    secretKey: "HF_TOKEN",
+}, {provider: cluster.provider, dependsOn: [kserve, huggingFaceSecret]});
+
 // Deploy Qwen2.5-7B-Instruct using KServe LLMInferenceService
 const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     modelUri: "hf://Qwen/Qwen2.5-7B-Instruct",
@@ -256,4 +274,4 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     nodeSelector: {
         "node-type": "gpu",
     },
-}, {provider: cluster.provider, dependsOn: [kserve]});
+}, {provider: cluster.provider, dependsOn: [kserve, hfStorageContainer]});

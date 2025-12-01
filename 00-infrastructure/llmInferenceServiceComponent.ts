@@ -2,6 +2,95 @@ import * as pulumi from "@pulumi/pulumi";
 import * as k8s from "@pulumi/kubernetes";
 
 /**
+ * Arguments for HuggingFace storage container configuration
+ */
+export interface HuggingFaceStorageArgs {
+    /**
+     * Name of the Kubernetes secret containing HF_TOKEN
+     */
+    secretName: pulumi.Input<string>;
+    /**
+     * Key in the secret that contains the HuggingFace token
+     * @default "HF_TOKEN"
+     */
+    secretKey?: pulumi.Input<string>;
+    /**
+     * Namespace where the secret is located
+     * @default "default"
+     */
+    secretNamespace?: pulumi.Input<string>;
+    /**
+     * Storage initializer image
+     * @default "kserve/storage-initializer:latest"
+     */
+    storageInitializerImage?: pulumi.Input<string>;
+}
+
+/**
+ * HuggingFaceStorageContainerComponent creates a ClusterStorageContainer
+ * that configures KServe to authenticate with HuggingFace when downloading
+ * models using hf:// URIs.
+ */
+export class HuggingFaceStorageContainerComponent extends pulumi.ComponentResource {
+    /**
+     * The ClusterStorageContainer custom resource
+     */
+    public readonly storageContainer: k8s.apiextensions.CustomResource;
+
+    constructor(name: string, args: HuggingFaceStorageArgs, opts?: pulumi.ComponentResourceOptions) {
+        super("kserve:index:HuggingFaceStorageContainerComponent", name, args, opts);
+
+        const secretKey = args.secretKey ?? "HF_TOKEN";
+        const storageInitializerImage = args.storageInitializerImage ?? "kserve/storage-initializer:latest";
+
+        this.storageContainer = new k8s.apiextensions.CustomResource(`${name}-csc`, {
+            apiVersion: "serving.kserve.io/v1alpha1",
+            kind: "ClusterStorageContainer",
+            metadata: {
+                name: name,
+            },
+            spec: {
+                container: {
+                    name: "storage-initializer",
+                    image: storageInitializerImage,
+                    env: [
+                        {
+                            name: "HF_TOKEN",
+                            valueFrom: {
+                                secretKeyRef: {
+                                    name: args.secretName,
+                                    key: secretKey,
+                                    optional: false,
+                                },
+                            },
+                        },
+                    ],
+                    resources: {
+                        requests: {
+                            memory: "2Gi",
+                            cpu: "1",
+                        },
+                        limits: {
+                            memory: "4Gi",
+                            cpu: "1",
+                        },
+                    },
+                },
+                supportedUriFormats: [
+                    {
+                        prefix: "hf://",
+                    },
+                ],
+            },
+        }, { parent: this });
+
+        this.registerOutputs({
+            storageContainerName: this.storageContainer.metadata.name,
+        });
+    }
+}
+
+/**
  * Resource configuration for the LLM container
  */
 export interface LLMResourceConfig {
