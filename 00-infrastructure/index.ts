@@ -6,7 +6,7 @@ import {SubnetType} from "@pulumi/awsx/ec2";
 import * as pulumiservice from "@pulumi/pulumiservice";
 import {KarpenterNodePoolComponent} from "./karpenterNodePoolComponent";
 import {KServeComponent} from "./kserveComponent";
-import {LLMInferenceServiceComponent, HuggingFaceStorageContainerComponent} from "./llmInferenceServiceComponent";
+import {LLMInferenceServiceComponent} from "./llmInferenceServiceComponent";
 
 const config = new pulumi.Config();
 const clusterName = config.require("clusterName");
@@ -49,72 +49,14 @@ const cluster = new eks.Cluster("eks-auto-mode", {
 
 export const kubeconfig = pulumi.secret(cluster.kubeconfigJson)
 
-/*
-const gpuKarpeterNodePool = new k8s.apiextensions.CustomResource("gpu-node-pool", {
-    apiVersion: "karpenter.sh/v1",
-    kind: "NodePool",
-    metadata: {
-        name: "gpu-node-pool",
-    },
-    spec: {
-        template: {
-            metadata: {
-                labels: {
-                    type: "karpenter",
-                    NodeGroupType: "gpu-node-pool",
-                },
-            },
-            spec: {
-                nodeClassRef: {
-                    group: "eks.amazonaws.com",
-                    kind: "NodeClass",
-                    name: "default",
-                },
-                taints: [
-                    {
-                        key: "nvidia.com/gpu",
-                        value: "Exists",
-                        effect: "NoSchedule",
-                    },
-                ],
-                requirements: [
-                    {
-                        key: "karpenter.sh/capacity-type",
-                        operator: "In",
-                        values: ["spot", "on-demand"],
-                    },
-                    {
-                        key: "topology.kubernetes.io/zone",
-                        operator: "In",
-                        values: ["us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d", "us-east-1e", "us-east-1f"],
-                    },
-                    {
-                        key: "eks.amazonaws.com/instance-category",
-                        operator: "In",
-                        values: ["g", "p"],
-                    },
-                    {
-                        key: "eks.amazonaws.com/instance-generation",
-                        operator: "Gt",
-                        values: [gpuInstanceGeneration],
-                    },
-                    {
-                        key: "kubernetes.io/arch",
-                        operator: "In",
-                        values: [gpuInstanceArch],
-                    }
-                ],
-            },
-        },
-        limits: {
-            cpu: "4000",
-            memory: "40000Gi",
-        },
-    }
-}, {provider: cluster.provider});
-*/
+const kuebeconfigProvider = new k8s.Provider("kubeconfig-provider", {
+    kubeconfig: cluster.kubeconfigJson,
+    enableServerSideApply: true,
+});
+
 const gpuStandardNodePool = new KarpenterNodePoolComponent("gpu-standard", {
-    instanceTypes: ["g4dn.xlarge", "g5.xlarge"],
+    // Use G5 instances with A10G GPUs (24GB VRAM) to fit 7B models
+    instanceTypes: ["g5.2xlarge"],
     capacityTypes: ["on-demand"],
     limits: {
         cpu: 1000,
@@ -127,24 +69,29 @@ const gpuStandardNodePool = new KarpenterNodePoolComponent("gpu-standard", {
             effect: "NoSchedule",
         },
     ],
-    // Label GPU nodes for easy identification
-    labels: {
-        "node-type": "gpu",
-    },
+    // Note: EKS Auto Mode doesn't support custom labels like "node-type: gpu"
+    // Use karpenter.sh/nodepool label in nodeSelector instead to target this pool
     disruption: {
         consolidationPolicy: "WhenEmpty",
         consolidateAfter: "1m",
     },
-}, {provider: cluster.provider});
+}, {provider: kuebeconfigProvider});
 
-// Install KServe v0.16 with cert-manager and serving runtimes
-// Uses RawDeployment mode to avoid Istio/Knative dependencies
+// Install KServe v0.16 with cert-manager, LLMInferenceService CRDs and resources
+// Uses Standard deployment mode to avoid Istio/Knative dependencies
+// Storage initializer memory is increased for large model downloads (Qwen2.5-7B is ~15GB)
 const kserve = new KServeComponent("kserve", {
     certManagerVersion: "v1.16.1",
     kserveVersion: "v0.16.0",
-    deploymentMode: "RawDeployment",
-    installServingRuntimes: true,
-}, {provider: cluster.provider, dependsOn: [gpuStandardNodePool]});
+    deploymentMode: "Standard",
+    // Configure default ClusterStorageContainer resources for large model downloads
+    storageInitializer: {
+        memoryRequest: "8Gi",
+        memoryLimit: "16Gi",
+        cpuRequest: "1",
+        cpuLimit: "4",
+    },
+}, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool]});
 
 /*
 const lwsChart = new k8s.helm.v3.Release("lws", {
@@ -250,15 +197,13 @@ const huggingFaceSecret = new k8s.core.v1.Secret("hf-secret", {
     stringData: {
         HF_TOKEN: config.requireSecret("huggingface-token"),
     },
-}, {provider: cluster.provider});
+}, {provider: kuebeconfigProvider});
 
-// Configure ClusterStorageContainer to enable hf:// URI authentication
-const hfStorageContainer = new HuggingFaceStorageContainerComponent("hf-storage", {
-    secretName: huggingFaceSecret.metadata.name,
-    secretKey: "HF_TOKEN",
-}, {provider: cluster.provider, dependsOn: [kserve, huggingFaceSecret]});
 
-// Deploy Qwen2.5-7B-Instruct using KServe LLMInferenceService
+// Deploy Qwen2.5-7B-Instruct using KServe LLMInferenceService (v1alpha1)
+// Uses the new GenAI-first API with built-in router, gateway and scheduler
+// Runs on G5 instances with A10G GPU (24GB VRAM)
+// Reference: https://kserve.github.io/website/docs/getting-started/genai-first-llmisvc
 const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     modelUri: "hf://Qwen/Qwen2.5-7B-Instruct",
     modelName: "Qwen/Qwen2.5-7B-Instruct",
@@ -271,7 +216,10 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
         cpuRequest: "2",
         memoryRequest: "16Gi",
     },
-    nodeSelector: {
-        "node-type": "gpu",
-    },
-}, {provider: cluster.provider, dependsOn: [kserve, hfStorageContainer]});
+    // vLLM args for A10G GPU (24GB VRAM)
+    args: [
+        "--max_model_len=8192",
+        "--gpu_memory_utilization=0.9",
+    ],
+}, {provider: kuebeconfigProvider});
+

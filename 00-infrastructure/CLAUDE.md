@@ -1,6 +1,6 @@
 # 00-infrastructure
 
-Pulumi TypeScript project for EKS Auto Mode cluster with GPU support via Karpenter.
+Pulumi TypeScript project for EKS Auto Mode cluster with GPU support via Karpenter and KServe LLMInferenceService.
 
 ## Stack
 
@@ -14,7 +14,7 @@ Pulumi TypeScript project for EKS Auto Mode cluster with GPU support via Karpent
 Reusable component for creating Karpenter NodePools. Located in `karpenterNodePoolComponent.ts`.
 
 **Required:**
-- `instanceTypes: string[]` - Instance types (e.g., `["g4dn.xlarge", "g5.xlarge"]`)
+- `instanceTypes: string[]` - Instance types (e.g., `["g5.2xlarge"]`)
 
 **Optional:**
 - `poolName?: string` - NodePool name in K8s (defaults to resource name)
@@ -33,28 +33,91 @@ Reusable component for creating Karpenter NodePools. Located in `karpenterNodePo
 **Example:**
 ```typescript
 const gpuPool = new KarpenterNodePoolComponent("gpu-standard", {
-    instanceTypes: ["g4dn.xlarge", "g5.xlarge"],
+    instanceTypes: ["g5.2xlarge"],
     capacityTypes: ["on-demand"],
     limits: { cpu: 1000 },
+    taints: [{ key: "nvidia.com/gpu", value: "true", effect: "NoSchedule" }],
     disruption: {
         consolidationPolicy: "WhenEmpty",
         consolidateAfter: "1m",
     },
-}, { provider: cluster.provider });
+}, { provider: kuebeconfigProvider });
 ```
 
-### AIModelComponent
+### KServeComponent
 
-Component for deploying AI models with vLLM on LeaderWorkerSet. Located in `aiModelComponent.ts`.
+Component for installing KServe v0.16 with all dependencies. Located in `kserveComponent.ts`.
+
+**Installs:**
+- cert-manager (from Jetstack Helm repo)
+- kserve-crd (from OCI registry)
+- kserve controller (from OCI registry)
+- llmisvc-crd (LLMInferenceService CRDs)
+- llmisvc-resources (LLMInferenceService controller and runtimes)
+
+**Args:**
+- `certManagerVersion?: string` - cert-manager version (default: `"v1.16.1"`)
+- `kserveVersion?: string` - KServe version (default: `"v0.16.0"`)
+- `deploymentMode?: "Standard" | "Serverless"` - Deployment mode (default: `"Standard"`)
+- `storageInitializer?: StorageInitializerConfig` - Storage initializer resource config
+
+**StorageInitializerConfig:**
+- `memoryRequest?: string` - Memory request (default: `"100Mi"`)
+- `memoryLimit?: string` - Memory limit (default: `"1Gi"`)
+- `cpuRequest?: string` - CPU request (default: `"100m"`)
+- `cpuLimit?: string` - CPU limit (default: `"1"`)
+
+**Example:**
+```typescript
+const kserve = new KServeComponent("kserve", {
+    certManagerVersion: "v1.16.1",
+    kserveVersion: "v0.16.0",
+    deploymentMode: "Standard",
+    storageInitializer: {
+        memoryRequest: "8Gi",
+        memoryLimit: "16Gi",
+        cpuRequest: "1",
+        cpuLimit: "4",
+    },
+}, { provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool] });
+```
+
+### LLMInferenceServiceComponent
+
+Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Located in `llmInferenceServiceComponent.ts`.
 
 **Required:**
-- `modelName: string` - HuggingFace model name
+- `modelUri: string` - Model URI (e.g., `"hf://Qwen/Qwen2.5-7B-Instruct"`)
+- `modelName: string` - Model name for vLLM
 
 **Optional:**
-- `namespaceName?: string` - K8s namespace (default: `"lws-system"`)
-- `size?: string` - T-shirt size: `"small"`, `"medium"`, `"large"`
-- `monitoringEnabled?: boolean` - Enable Prometheus scraping
-- `notParallel?: boolean` - Disable pipeline parallelism
+- `namespace?: string` - K8s namespace (default: `"default"`)
+- `replicas?: number` - Number of replicas (default: `1`)
+- `resources?: LLMResourceConfig` - CPU, memory, GPU resources
+- `args?: string[]` - Additional vLLM arguments
+- `env?: EnvVar[]` - Environment variables
+- `tolerations?: Toleration[]` - Pod tolerations
+
+**Example:**
+```typescript
+const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
+    modelUri: "hf://Qwen/Qwen2.5-7B-Instruct",
+    modelName: "Qwen/Qwen2.5-7B-Instruct",
+    namespace: "default",
+    replicas: 1,
+    resources: {
+        cpuLimit: "4",
+        memoryLimit: "32Gi",
+        gpuCount: 1,
+        cpuRequest: "2",
+        memoryRequest: "16Gi",
+    },
+    args: [
+        "--max_model_len=8192",
+        "--gpu_memory_utilization=0.9",
+    ],
+}, { provider: kuebeconfigProvider });
+```
 
 ## Config Values
 
@@ -74,9 +137,9 @@ pulumi env run pulumi-idp/auth -i -- <aws-command>
 
 **For kubectl operations** (cluster access via kubeconfig):
 ```bash
-pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -- kubectl <command>
-# Example: pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -- kubectl get nodes
-# Example: pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -- kubectl get pods -A
+pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -i -- kubectl <command>
+# Example: pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -i -- kubectl get nodes
+# Example: pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -i -- kubectl get pods -A
 ```
 
 **For Pulumi operations** (stack is configured in `Pulumi.dev.yaml`):
@@ -88,36 +151,38 @@ pulumi up --yes
 
 > **Note:** Do NOT use `pulumi env` for `pulumi up` - the environment is already set in `Pulumi.dev.yaml`.
 
-### KServeComponent
-
-Component for installing KServe v0.16 with all dependencies. Located in `kserveComponent.ts`.
-
-**Installs:**
-- cert-manager (from Jetstack Helm repo)
-- kserve-crd (from OCI registry)
-- kserve controller (from OCI registry, includes all ClusterServingRuntimes)
-- llmisvc-crd (optional, for LLM features)
-
-**Args:**
-- `certManagerVersion?: string` - cert-manager version (default: `"v1.16.1"`)
-- `kserveVersion?: string` - KServe version (default: `"v0.16.0"`)
-- `deploymentMode?: "RawDeployment" | "Serverless"` - Deployment mode (default: `"RawDeployment"`)
-- `installServingRuntimes?: boolean` - Install LLMInferenceService CRDs (default: `true`)
-
-**Example:**
-```typescript
-const kserve = new KServeComponent("kserve", {
-    certManagerVersion: "v1.16.1",
-    kserveVersion: "v0.16.0",
-    deploymentMode: "RawDeployment",
-    installServingRuntimes: true,
-}, { provider: cluster.provider, dependsOn: [gpuStandardNodePool] });
-```
-
 ## GPU Node Isolation
 
 GPU nodes are tainted to ensure only GPU workloads run on them:
 - **Taint:** `nvidia.com/gpu=true:NoSchedule`
-- **Label:** `node-type=gpu`
 
 Non-GPU workloads (cert-manager, kserve-controller, etc.) run on EKS Auto Mode general-purpose nodes.
+
+## Testing the LLM
+
+After deployment, test the model with port-forward:
+
+```bash
+# Port forward
+pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -i -- \
+  kubectl port-forward svc/qwen2-7b-instruct-kserve-workload-svc 8000:8000 -n default
+
+# Check available models
+curl http://localhost:8000/v1/models
+
+# Chat completion
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "/mnt/models",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+## GPU Instance Sizing
+
+| Model Size | GPU Memory | Recommended Instance |
+|------------|------------|---------------------|
+| 3B         | ~6GB       | g4dn.xlarge (T4 16GB) |
+| 7B         | ~14GB      | g5.2xlarge (A10G 24GB) |
+| 13B        | ~26GB      | g5.4xlarge (A10G 24GB) or p4d |

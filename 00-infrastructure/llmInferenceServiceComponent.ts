@@ -24,6 +24,26 @@ export interface HuggingFaceStorageArgs {
      * @default "kserve/storage-initializer:latest"
      */
     storageInitializerImage?: pulumi.Input<string>;
+    /**
+     * Memory request for storage initializer
+     * @default "8Gi"
+     */
+    memoryRequest?: pulumi.Input<string>;
+    /**
+     * Memory limit for storage initializer
+     * @default "16Gi"
+     */
+    memoryLimit?: pulumi.Input<string>;
+    /**
+     * CPU request for storage initializer
+     * @default "1"
+     */
+    cpuRequest?: pulumi.Input<string>;
+    /**
+     * CPU limit for storage initializer
+     * @default "4"
+     */
+    cpuLimit?: pulumi.Input<string>;
 }
 
 /**
@@ -42,6 +62,10 @@ export class HuggingFaceStorageContainerComponent extends pulumi.ComponentResour
 
         const secretKey = args.secretKey ?? "HF_TOKEN";
         const storageInitializerImage = args.storageInitializerImage ?? "kserve/storage-initializer:latest";
+        const memoryRequest = args.memoryRequest ?? "8Gi";
+        const memoryLimit = args.memoryLimit ?? "16Gi";
+        const cpuRequest = args.cpuRequest ?? "1";
+        const cpuLimit = args.cpuLimit ?? "4";
 
         this.storageContainer = new k8s.apiextensions.CustomResource(`${name}-csc`, {
             apiVersion: "serving.kserve.io/v1alpha1",
@@ -67,12 +91,12 @@ export class HuggingFaceStorageContainerComponent extends pulumi.ComponentResour
                     ],
                     resources: {
                         requests: {
-                            memory: "2Gi",
-                            cpu: "1",
+                            memory: memoryRequest,
+                            cpu: cpuRequest,
                         },
                         limits: {
-                            memory: "4Gi",
-                            cpu: "1",
+                            memory: memoryLimit,
+                            cpu: cpuLimit,
                         },
                     },
                 },
@@ -118,44 +142,143 @@ export interface LLMResourceConfig {
 }
 
 /**
- * Liveness probe configuration
+ * Arguments for creating an LLMInferenceServiceConfig
  */
-export interface LivenessProbeConfig {
+export interface LLMInferenceServiceConfigArgs {
     /**
-     * Path for the health check endpoint
-     * @default "/health"
+     * Kubernetes namespace for the config (should be kserve for global configs)
+     * @default "kserve"
      */
-    path?: string;
+    namespace?: pulumi.Input<string>;
+
     /**
-     * Port for the health check
-     * @default 8000
+     * Resource configuration for the LLM container
      */
-    port?: number;
+    resources?: LLMResourceConfig;
+
     /**
-     * Scheme for the health check (HTTP or HTTPS)
-     * @default "HTTPS"
+     * Tolerations for GPU nodes
+     * @default Includes nvidia.com/gpu toleration
      */
-    scheme?: "HTTP" | "HTTPS";
+    tolerations?: k8s.types.input.core.v1.Toleration[];
+
     /**
-     * Initial delay before starting probes
-     * @default 120
+     * Additional environment variables for the container
      */
-    initialDelaySeconds?: number;
+    env?: k8s.types.input.core.v1.EnvVar[];
+
     /**
-     * Period between probes
-     * @default 30
+     * Custom vLLM container image
      */
-    periodSeconds?: number;
+    image?: pulumi.Input<string>;
+
     /**
-     * Timeout for each probe
-     * @default 30
+     * Additional args for vLLM (e.g., ["--max_model_len", "2048"])
      */
-    timeoutSeconds?: number;
+    args?: pulumi.Input<string>[];
+}
+
+/**
+ * LLMInferenceServiceConfigComponent creates a reusable LLMInferenceServiceConfig
+ * that can be referenced by multiple LLMInferenceServices via baseRefs.
+ *
+ * Reference: https://kserve.github.io/website/docs/model-serving/generative-inference/llmisvc/llmisvc-configuration
+ */
+export class LLMInferenceServiceConfigComponent extends pulumi.ComponentResource {
     /**
-     * Number of failures before marking unhealthy
-     * @default 5
+     * The LLMInferenceServiceConfig custom resource
      */
-    failureThreshold?: number;
+    public readonly config: k8s.apiextensions.CustomResource;
+
+    /**
+     * The name of the config
+     */
+    public readonly configName: pulumi.Output<string>;
+
+    constructor(name: string, args: LLMInferenceServiceConfigArgs = {}, opts?: pulumi.ComponentResourceOptions) {
+        super("kserve:index:LLMInferenceServiceConfigComponent", name, args, opts);
+
+        const namespace = args.namespace ?? "kserve";
+
+        // Default resource configuration
+        const resources = {
+            cpuLimit: args.resources?.cpuLimit ?? "4",
+            memoryLimit: args.resources?.memoryLimit ?? "32Gi",
+            gpuCount: args.resources?.gpuCount ?? 1,
+            cpuRequest: args.resources?.cpuRequest ?? "2",
+            memoryRequest: args.resources?.memoryRequest ?? "16Gi",
+        };
+
+        // Default tolerations for GPU nodes
+        const tolerations = args.tolerations ?? [
+            {
+                key: "nvidia.com/gpu",
+                operator: "Exists",
+                effect: "NoSchedule",
+            },
+        ];
+
+        // Build container spec
+        const containerSpec: any = {
+            name: "main",
+            resources: {
+                limits: {
+                    cpu: resources.cpuLimit,
+                    memory: resources.memoryLimit,
+                    "nvidia.com/gpu": `${resources.gpuCount}`,
+                },
+                requests: {
+                    cpu: resources.cpuRequest,
+                    memory: resources.memoryRequest,
+                    "nvidia.com/gpu": `${resources.gpuCount}`,
+                },
+            },
+        };
+
+        // Add custom image if specified
+        if (args.image) {
+            containerSpec.image = args.image;
+        }
+
+        // Add custom args if specified
+        if (args.args && args.args.length > 0) {
+            containerSpec.args = args.args;
+        }
+
+        // Add environment variables if specified
+        if (args.env && args.env.length > 0) {
+            containerSpec.env = args.env;
+        }
+
+        // Build template spec
+        const templateSpec: any = {
+            containers: [containerSpec],
+        };
+
+        // Add tolerations if specified
+        if (tolerations.length > 0) {
+            templateSpec.tolerations = tolerations;
+        }
+
+        // Create the LLMInferenceServiceConfig custom resource (v1alpha1)
+        this.config = new k8s.apiextensions.CustomResource(`${name}-llmisvc-config`, {
+            apiVersion: "serving.kserve.io/v1alpha1",
+            kind: "LLMInferenceServiceConfig",
+            metadata: {
+                name: name,
+                namespace: namespace,
+            },
+            spec: {
+                template: templateSpec,
+            },
+        }, { parent: this });
+
+        this.configName = this.config.metadata.name;
+
+        this.registerOutputs({
+            configName: this.configName,
+        });
+    }
 }
 
 /**
@@ -169,7 +292,7 @@ export interface LLMInferenceServiceArgs {
     modelUri: pulumi.Input<string>;
 
     /**
-     * The model name/identifier (e.g., "Qwen/Qwen2.5-7B-Instruct")
+     * The model name for the inference endpoint (e.g., "Qwen/Qwen2.5-7B-Instruct")
      */
     modelName: pulumi.Input<string>;
 
@@ -186,38 +309,58 @@ export interface LLMInferenceServiceArgs {
     replicas?: pulumi.Input<number>;
 
     /**
-     * Resource configuration for the LLM container
+     * References to LLMInferenceServiceConfig resources to compose
+     * Configs are merged in order, with later configs overriding earlier ones
+     */
+    baseRefs?: pulumi.Input<string>[];
+
+    /**
+     * Resource configuration for the LLM container (inline override)
+     * Consider using baseRefs with LLMInferenceServiceConfig for reusability
      */
     resources?: LLMResourceConfig;
 
     /**
-     * Liveness probe configuration
-     */
-    livenessProbe?: LivenessProbeConfig;
-
-    /**
-     * Node selector for scheduling pods
-     */
-    nodeSelector?: Record<string, string>;
-
-    /**
-     * Tolerations for GPU nodes
+     * Tolerations for GPU nodes (inline override)
      * @default Includes nvidia.com/gpu toleration
      */
     tolerations?: k8s.types.input.core.v1.Toleration[];
+
+    /**
+     * Additional environment variables for the container (inline override)
+     */
+    env?: k8s.types.input.core.v1.EnvVar[];
+
+    /**
+     * Custom vLLM container image (inline override)
+     */
+    image?: pulumi.Input<string>;
+
+    /**
+     * Additional args for vLLM (inline override, e.g., ["--max_model_len", "2048"])
+     */
+    args?: pulumi.Input<string>[];
+
+    /**
+     * Liveness probe configuration (inline override)
+     */
+    livenessProbe?: {
+        initialDelaySeconds?: number;
+        periodSeconds?: number;
+        timeoutSeconds?: number;
+        failureThreshold?: number;
+    };
 }
 
 /**
- * LLMInferenceServiceComponent deploys LLM models using KServe's LLMInferenceService CR.
- * This component creates an LLMInferenceService custom resource that automatically
- * provisions the vLLM deployment, service, gateway, and routing infrastructure.
- *
- * Features:
- * - Automatic deployment of vLLM with the specified model
- * - Built-in load balancing with configurable replicas
- * - GPU resource allocation
- * - Health monitoring via liveness probes
+ * LLMInferenceServiceComponent deploys LLM models using KServe's LLMInferenceService (v1alpha1).
+ * This component creates an LLMInferenceService with the new GenAI-first API that provides:
+ * - Simplified deployment for LLM models
+ * - Built-in router with Gateway, HTTPRoute, and Scheduler
+ * - Configuration composition via baseRefs
  * - Integration with KServe's inference gateway
+ *
+ * Reference: https://kserve.github.io/website/docs/getting-started/genai-first-llmisvc
  */
 export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
     /**
@@ -239,81 +382,114 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
         super("kserve:index:LLMInferenceServiceComponent", name, args, opts);
 
         const namespace = args.namespace ?? "default";
-        const replicas = args.replicas ?? 1;
 
-        // Default resource configuration
-        const resources = {
-            cpuLimit: args.resources?.cpuLimit ?? "4",
-            memoryLimit: args.resources?.memoryLimit ?? "32Gi",
-            gpuCount: args.resources?.gpuCount ?? 1,
-            cpuRequest: args.resources?.cpuRequest ?? "2",
-            memoryRequest: args.resources?.memoryRequest ?? "16Gi",
-        };
-
-        // Default liveness probe configuration
-        const livenessProbe = {
-            path: args.livenessProbe?.path ?? "/health",
-            port: args.livenessProbe?.port ?? 8000,
-            scheme: args.livenessProbe?.scheme ?? "HTTPS",
-            initialDelaySeconds: args.livenessProbe?.initialDelaySeconds ?? 120,
-            periodSeconds: args.livenessProbe?.periodSeconds ?? 30,
-            timeoutSeconds: args.livenessProbe?.timeoutSeconds ?? 30,
-            failureThreshold: args.livenessProbe?.failureThreshold ?? 5,
-        };
-
-        // Default tolerations for GPU nodes
-        const tolerations = args.tolerations ?? [
-            {
-                key: "nvidia.com/gpu",
-                operator: "Exists",
-                effect: "NoSchedule",
+        // Build the spec
+        const spec: any = {
+            model: {
+                uri: args.modelUri,
+                name: args.modelName,
             },
-        ];
-
-        // Build the container spec
-        const containerSpec: any = {
-            name: "main",
-            resources: {
-                limits: {
-                    cpu: resources.cpuLimit,
-                    memory: resources.memoryLimit,
-                    "nvidia.com/gpu": `${resources.gpuCount}`,
-                },
-                requests: {
-                    cpu: resources.cpuRequest,
-                    memory: resources.memoryRequest,
-                    "nvidia.com/gpu": `${resources.gpuCount}`,
-                },
-            },
-            livenessProbe: {
-                httpGet: {
-                    path: livenessProbe.path,
-                    port: livenessProbe.port,
-                    scheme: livenessProbe.scheme,
-                },
-                initialDelaySeconds: livenessProbe.initialDelaySeconds,
-                periodSeconds: livenessProbe.periodSeconds,
-                timeoutSeconds: livenessProbe.timeoutSeconds,
-                failureThreshold: livenessProbe.failureThreshold,
+            replicas: args.replicas ?? 1,
+            router: {
+                scheduler: {},  // Default scheduler with default load balancing
+                route: {},
+                gateway: {},
             },
         };
 
-        // Build the template spec
-        const templateSpec: any = {
-            containers: [containerSpec],
-        };
-
-        // Add tolerations if specified
-        if (tolerations.length > 0) {
-            templateSpec.tolerations = tolerations;
+        // Add baseRefs if provided (for configuration composition)
+        if (args.baseRefs && args.baseRefs.length > 0) {
+            spec.baseRefs = args.baseRefs.map(ref => ({ name: ref }));
         }
 
-        // Add node selector if specified
-        if (args.nodeSelector && Object.keys(args.nodeSelector).length > 0) {
-            templateSpec.nodeSelector = args.nodeSelector;
+        // Build inline template overrides if any are provided
+        const hasInlineOverrides = args.resources || args.tolerations || args.env ||
+                                   args.image || args.args || args.livenessProbe;
+
+        if (hasInlineOverrides) {
+            // Default resource configuration
+            const resources = {
+                cpuLimit: args.resources?.cpuLimit ?? "4",
+                memoryLimit: args.resources?.memoryLimit ?? "32Gi",
+                gpuCount: args.resources?.gpuCount ?? 1,
+                cpuRequest: args.resources?.cpuRequest ?? "2",
+                memoryRequest: args.resources?.memoryRequest ?? "16Gi",
+            };
+
+            // Default tolerations for GPU nodes
+            const tolerations = args.tolerations ?? [
+                {
+                    key: "nvidia.com/gpu",
+                    operator: "Exists",
+                    effect: "NoSchedule",
+                },
+            ];
+
+            // Default liveness probe configuration
+            const livenessProbe = {
+                initialDelaySeconds: args.livenessProbe?.initialDelaySeconds ?? 120,
+                periodSeconds: args.livenessProbe?.periodSeconds ?? 30,
+                timeoutSeconds: args.livenessProbe?.timeoutSeconds ?? 30,
+                failureThreshold: args.livenessProbe?.failureThreshold ?? 5,
+            };
+
+            // Build container spec
+            const containerSpec: any = {
+                name: "main",
+                resources: {
+                    limits: {
+                        cpu: resources.cpuLimit,
+                        memory: resources.memoryLimit,
+                        "nvidia.com/gpu": `${resources.gpuCount}`,
+                    },
+                    requests: {
+                        cpu: resources.cpuRequest,
+                        memory: resources.memoryRequest,
+                        "nvidia.com/gpu": `${resources.gpuCount}`,
+                    },
+                },
+                livenessProbe: {
+                    httpGet: {
+                        path: "/health",
+                        port: 8000,
+                        scheme: "HTTPS",
+                    },
+                    initialDelaySeconds: livenessProbe.initialDelaySeconds,
+                    periodSeconds: livenessProbe.periodSeconds,
+                    timeoutSeconds: livenessProbe.timeoutSeconds,
+                    failureThreshold: livenessProbe.failureThreshold,
+                },
+            };
+
+            // Add custom image if specified
+            if (args.image) {
+                containerSpec.image = args.image;
+            }
+
+            // Add custom args if specified
+            if (args.args && args.args.length > 0) {
+                containerSpec.args = args.args;
+            }
+
+            // Add environment variables if specified
+            if (args.env && args.env.length > 0) {
+                containerSpec.env = args.env;
+            }
+
+            // Build template spec
+            const templateSpec: any = {
+                containers: [containerSpec],
+            };
+
+            // Add tolerations if specified
+            if (tolerations.length > 0) {
+                templateSpec.tolerations = tolerations;
+            }
+
+            spec.template = templateSpec;
         }
 
-        // Create the LLMInferenceService custom resource
+        // Create the LLMInferenceService custom resource (v1alpha1)
         this.llmInferenceService = new k8s.apiextensions.CustomResource(`${name}-llmisvc`, {
             apiVersion: "serving.kserve.io/v1alpha1",
             kind: "LLMInferenceService",
@@ -321,19 +497,7 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
                 name: name,
                 namespace: namespace,
             },
-            spec: {
-                model: {
-                    uri: args.modelUri,
-                    name: args.modelName,
-                },
-                replicas: replicas,
-                router: {
-                    scheduler: {},
-                    route: {},
-                    gateway: {},
-                },
-                template: templateSpec,
-            },
+            spec: spec,
         }, { parent: this });
 
         this.serviceName = this.llmInferenceService.metadata.name;
