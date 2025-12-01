@@ -238,15 +238,15 @@ const dcgmExporter = new k8s.helm.v3.Release("dcgm-exporter", {
         nodeSelector: {
             "karpenter.sh/nodepool": "gpu-standard",
         },
-        // Resource limits - DCGM exporter needs more memory on GPU nodes
+        // Resource limits - DCGM exporter needs ~500Mi memory on GPU nodes
         resources: {
             requests: {
                 cpu: "100m",
-                memory: "256Mi",
+                memory: "512Mi",
             },
             limits: {
                 cpu: "500m",
-                memory: "512Mi",
+                memory: "1Gi",
             },
         },
     },
