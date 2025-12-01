@@ -6,6 +6,7 @@ import {SubnetType} from "@pulumi/awsx/ec2";
 import * as pulumiservice from "@pulumi/pulumiservice";
 import {AIModelComponent} from "./aiModelComponent";
 import {KarpenterNodePoolComponent} from "./karpenterNodePoolComponent";
+import {KServeComponent} from "./kserveComponent";
 
 const config = new pulumi.Config();
 const clusterName = config.require("clusterName");
@@ -118,11 +119,32 @@ const gpuStandardNodePool = new KarpenterNodePoolComponent("gpu-standard", {
     limits: {
         cpu: 1000,
     },
+    // Taint GPU nodes so only workloads that tolerate GPUs are scheduled here
+    taints: [
+        {
+            key: "nvidia.com/gpu",
+            value: "true",
+            effect: "NoSchedule",
+        },
+    ],
+    // Label GPU nodes for easy identification
+    labels: {
+        "node-type": "gpu",
+    },
     disruption: {
         consolidationPolicy: "WhenEmpty",
         consolidateAfter: "1m",
     },
 }, {provider: cluster.provider});
+
+// Install KServe v0.16 with cert-manager and serving runtimes
+// Uses RawDeployment mode to avoid Istio/Knative dependencies
+const kserve = new KServeComponent("kserve", {
+    certManagerVersion: "v1.16.1",
+    kserveVersion: "v0.16.0",
+    deploymentMode: "RawDeployment",
+    installServingRuntimes: true,
+}, {provider: cluster.provider, dependsOn: [gpuStandardNodePool]});
 
 /*
 const lwsChart = new k8s.helm.v3.Release("lws", {
