@@ -60,12 +60,19 @@ Component for installing KServe v0.16 with all dependencies. Located in `kserveC
 - `kserveVersion?: string` - KServe version (default: `"v0.16.0"`)
 - `deploymentMode?: "Standard" | "Serverless"` - Deployment mode (default: `"Standard"`)
 - `storageInitializer?: StorageInitializerConfig` - Storage initializer resource config
+- `llmisvController?: LLMISvcControllerConfig` - LLMInferenceService controller resource config
 
 **StorageInitializerConfig:**
 - `memoryRequest?: string` - Memory request (default: `"100Mi"`)
 - `memoryLimit?: string` - Memory limit (default: `"1Gi"`)
 - `cpuRequest?: string` - CPU request (default: `"100m"`)
 - `cpuLimit?: string` - CPU limit (default: `"1"`)
+
+**LLMISvcControllerConfig:**
+- `cpuRequest?: string` - CPU request (default: `"100m"`)
+- `cpuLimit?: string` - CPU limit (default: `"500m"`)
+- `memoryRequest?: string` - Memory request (default: `"300Mi"`)
+- `memoryLimit?: string` - Memory limit (default: `"1Gi"`)
 
 **Example:**
 ```typescript
@@ -74,10 +81,16 @@ const kserve = new KServeComponent("kserve", {
     kserveVersion: "v0.16.0",
     deploymentMode: "Standard",
     storageInitializer: {
-        memoryRequest: "8Gi",
-        memoryLimit: "16Gi",
-        cpuRequest: "1",
-        cpuLimit: "4",
+        memoryRequest: "16Gi",
+        memoryLimit: "64Gi",
+        cpuRequest: "2",
+        cpuLimit: "8",
+    },
+    llmisvController: {
+        cpuRequest: "200m",
+        cpuLimit: "1",
+        memoryRequest: "512Mi",
+        memoryLimit: "2Gi",
     },
 }, { provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool] });
 ```
@@ -157,7 +170,8 @@ const observability = new ObservabilityComponent("observability", {
     dcgmExporter: {
         enabled: true,
         version: "4.6.0",
-        nodeSelector: { "karpenter.sh/nodepool": "gpu-standard" },
+        // Use EKS GPU node label to only schedule on GPU nodes
+        nodeSelector: { "eks.amazonaws.com/instance-gpu-manufacturer": "nvidia" },
         tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
         memoryRequest: "512Mi",
         memoryLimit: "1Gi",
@@ -239,3 +253,19 @@ curl http://localhost:8000/v1/chat/completions \
 | 3B         | ~6GB       | g4dn.xlarge (T4 16GB) |
 | 7B         | ~14GB      | g5.2xlarge (A10G 24GB) |
 | 13B        | ~26GB      | g5.4xlarge (A10G 24GB) or p4d |
+| 70B        | ~140GB     | p4d.24xlarge (8x A100 40GB) |
+| 480B MoE   | ~250GB     | p4de.24xlarge (8x A100 80GB) |
+
+## NodePools
+
+Two GPU NodePools are configured:
+
+- **gpu-standard**: `g5.2xlarge` (A10G 24GB) - For 7B-13B models
+- **gpu-a100**: `p4de.24xlarge` (8x A100 80GB) - For large MoE models (480B+)
+
+## Gated Models
+
+Some models on HuggingFace require license acceptance:
+
+- **Meta Llama 3**: Accept license at https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+- Ensure your `HF_TOKEN` is from the same account that accepted the license

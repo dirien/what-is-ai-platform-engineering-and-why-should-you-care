@@ -35,6 +35,32 @@ export interface StorageInitializerConfig {
 }
 
 /**
+ * LLMInferenceService controller resource configuration
+ */
+export interface LLMISvcControllerConfig {
+    /**
+     * CPU request for the controller
+     * @default "100m"
+     */
+    cpuRequest?: string;
+    /**
+     * CPU limit for the controller
+     * @default "500m"
+     */
+    cpuLimit?: string;
+    /**
+     * Memory request for the controller
+     * @default "300Mi"
+     */
+    memoryRequest?: string;
+    /**
+     * Memory limit for the controller
+     * @default "1Gi"
+     */
+    memoryLimit?: string;
+}
+
+/**
  * Arguments for creating a KServe component
  */
 export interface KServeComponentArgs {
@@ -70,6 +96,12 @@ export interface KServeComponentArgs {
      * Increase memory limits for large model downloads (e.g., 16Gi for 7B+ models)
      */
     storageInitializer?: StorageInitializerConfig;
+
+    /**
+     * LLMInferenceService controller resource configuration
+     * Increase limits when managing many LLMInferenceService resources
+     */
+    llmisvController?: LLMISvcControllerConfig;
 }
 
 /**
@@ -190,6 +222,24 @@ export class KServeComponent extends pulumi.ComponentResource {
             version: kserveVersion,
             namespace: this.kserveNamespace.metadata.name,
             skipCrds: true,
+            values: {
+                kserve: {
+                    llmisvc: {
+                        controller: {
+                            resources: {
+                                requests: {
+                                    cpu: args.llmisvController?.cpuRequest ?? "100m",
+                                    memory: args.llmisvController?.memoryRequest ?? "300Mi",
+                                },
+                                limits: {
+                                    cpu: args.llmisvController?.cpuLimit ?? "500m",
+                                    memory: args.llmisvController?.memoryLimit ?? "1Gi",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
         }, { parent: this, dependsOn: [this.llmisvCrd] });
 
         // Patch the inferenceservice-config ConfigMap with storage initializer settings
