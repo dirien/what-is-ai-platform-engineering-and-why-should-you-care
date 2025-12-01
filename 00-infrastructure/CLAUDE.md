@@ -119,6 +119,59 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
 }, { provider: kuebeconfigProvider });
 ```
 
+### ObservabilityComponent
+
+Reusable component for deploying a complete observability stack. Located in `observabilityComponent.ts`.
+
+**Installs:**
+- Metrics Server (for HPA support)
+- kube-prometheus-stack (Prometheus, Grafana, node-exporter, kube-state-metrics)
+- NVIDIA DCGM Exporter (GPU metrics)
+- Pre-provisioned NVIDIA DCGM dashboard (Grafana ID 12239)
+- EBS storage class for persistent volumes
+
+**Args:**
+- `namespace?: string` - Namespace for monitoring stack (default: `"monitoring"`)
+- `storageClassName?: string` - Storage class name (creates EBS if not provided)
+- `createStorageClass?: boolean` - Create default EBS storage class (default: `true`)
+- `metricsServer?: MetricsServerConfig` - Metrics server configuration
+- `prometheusStack?: PrometheusStackConfig` - Prometheus stack configuration
+- `grafana?: GrafanaConfig` - Grafana configuration
+- `dcgmExporter?: DcgmExporterConfig` - DCGM exporter configuration
+
+**Example:**
+```typescript
+const observability = new ObservabilityComponent("observability", {
+    namespace: "monitoring",
+    metricsServer: { enabled: true, version: "3.13.0" },
+    prometheusStack: {
+        version: "79.9.0",
+        alertmanagerEnabled: false,
+        storageSize: "50Gi",
+    },
+    grafana: {
+        enabled: true,
+        adminPassword: "admin",
+        storageSize: "10Gi",
+    },
+    dcgmExporter: {
+        enabled: true,
+        version: "4.6.0",
+        nodeSelector: { "karpenter.sh/nodepool": "gpu-standard" },
+        tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
+        memoryRequest: "512Mi",
+        memoryLimit: "1Gi",
+    },
+}, { provider: kuebeconfigProvider });
+```
+
+**Access Grafana:**
+```bash
+pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -i -- \
+  kubectl port-forward svc/observability-kube-prometheus-stack-grafana 3000:80 -n monitoring
+# Open http://localhost:3000 (admin/admin)
+```
+
 ## Config Values
 
 Set via `pulumi config set`:

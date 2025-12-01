@@ -7,6 +7,7 @@ import * as pulumiservice from "@pulumi/pulumiservice";
 import {KarpenterNodePoolComponent} from "./karpenterNodePoolComponent";
 import {KServeComponent} from "./kserveComponent";
 import {LLMInferenceServiceComponent} from "./llmInferenceServiceComponent";
+import {ObservabilityComponent} from "./observabilityComponent";
 
 const config = new pulumi.Config();
 const clusterName = config.require("clusterName");
@@ -93,75 +94,48 @@ const kserve = new KServeComponent("kserve", {
     },
 }, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool]});
 
-/*
-const lwsChart = new k8s.helm.v3.Release("lws", {
-    chart: "oci://registry.k8s.io/lws/charts/lws",
-    version: "0.7.0",
-    namespace: "lws-system",
-    createNamespace: true,
-}, {provider: cluster.provider, dependsOn: [gpuKarpeterNodePool]});
-
-
-const litelllm = new k8s.helm.v3.Release("litelllm", {
-    chart: "oci://ghcr.io/berriai/litellm-helm",
-    version: "0.1.804",
-    values: {
-        envVars: {
-            UI_USERNAME: "admin",
-            UI_PASSWORD: "admin",
-            STORE_MODEL_IN_DB: "True"
-        },
-    }
-}, {provider: cluster.provider, dependsOn: [lwsChart]});
-
-const storageClass = new k8s.storage.v1.StorageClass("prometheus-storage-class", {
-    metadata: {
-        name: "auto-ebs-sc",
-        annotations: {
-            "storageclass.kubernetes.io/is-default-class": "true",
-        },
-    },
-    provisioner: "ebs.csi.eks.amazonaws.com",
-    volumeBindingMode: "WaitForFirstConsumer",
-    parameters: {
-        type: "gp3",
-        encrypted: "true",
-    }
-}, {provider: cluster.provider});
-
-const prometheus = new k8s.helm.v3.Release("prometheus", {
-    chart: "oci://ghcr.io/prometheus-community/charts/prometheus",
-    version: "27.42.0",
+// Observability stack: Prometheus, Grafana, DCGM Exporter, Metrics Server
+// Provides GPU monitoring with pre-provisioned NVIDIA DCGM dashboard
+const observability = new ObservabilityComponent("observability", {
     namespace: "monitoring",
-    createNamespace: true,
-    values: {
-        alertmanager: {
-            enabled: false,
-        },
-        "prometheus-pushgateway": {
-            enabled: false,
-        },
-        "prometheus-node-exporter": {
-            enabled: false,
-        },
-        server: {
-            persistentVolume: {
-                storageClass: storageClass.metadata.name,
-            }
-        }
-    }
-}, {provider: cluster.provider, dependsOn: [storageClass, lwsChart]});
-
-const huggingFaceSecret = new k8s.core.v1.Secret("huggingface-secret", {
-    metadata: {
-        name: "huggingface-token",
-        namespace: "lws-system",
+    // Metrics server for HPA support
+    metricsServer: {
+        enabled: true,
+        version: "3.13.0",
     },
-    stringData: {
-        token: config.requireSecret("huggingface-token")
+    // Prometheus stack configuration
+    prometheusStack: {
+        version: "79.9.0",
+        alertmanagerEnabled: false,
+        storageSize: "50Gi",
     },
-}, {provider: cluster.provider, dependsOn: [lwsChart]});
-*/
+    // Grafana with NVIDIA DCGM dashboard
+    grafana: {
+        enabled: true,
+        adminPassword: "admin", // Change in production!
+        storageSize: "10Gi",
+    },
+    // DCGM exporter for GPU metrics
+    dcgmExporter: {
+        enabled: true,
+        version: "4.6.0",
+        // Only run on GPU nodes
+        nodeSelector: {
+            "karpenter.sh/nodepool": "gpu-standard",
+        },
+        // Tolerate GPU node taints
+        tolerations: [
+            {
+                key: "nvidia.com/gpu",
+                operator: "Exists",
+                effect: "NoSchedule",
+            },
+        ],
+        // DCGM exporter needs ~500Mi memory
+        memoryRequest: "512Mi",
+        memoryLimit: "1Gi",
+    },
+}, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool]});
 
 const environmentResource = new pulumiservice.Environment("environmentResource", {
     name: clusterName + "-cluster",
