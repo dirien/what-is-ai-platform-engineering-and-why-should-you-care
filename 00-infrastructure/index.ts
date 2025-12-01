@@ -93,27 +93,7 @@ const kserve = new KServeComponent("kserve", {
     },
 }, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool]});
 
-/*
-const lwsChart = new k8s.helm.v3.Release("lws", {
-    chart: "oci://registry.k8s.io/lws/charts/lws",
-    version: "0.7.0",
-    namespace: "lws-system",
-    createNamespace: true,
-}, {provider: cluster.provider, dependsOn: [gpuKarpeterNodePool]});
-
-
-const litelllm = new k8s.helm.v3.Release("litelllm", {
-    chart: "oci://ghcr.io/berriai/litellm-helm",
-    version: "0.1.804",
-    values: {
-        envVars: {
-            UI_USERNAME: "admin",
-            UI_PASSWORD: "admin",
-            STORE_MODEL_IN_DB: "True"
-        },
-    }
-}, {provider: cluster.provider, dependsOn: [lwsChart]});
-
+// Storage class for persistent volumes (Prometheus, Grafana)
 const storageClass = new k8s.storage.v1.StorageClass("prometheus-storage-class", {
     metadata: {
         name: "auto-ebs-sc",
@@ -127,41 +107,150 @@ const storageClass = new k8s.storage.v1.StorageClass("prometheus-storage-class",
         type: "gp3",
         encrypted: "true",
     }
-}, {provider: cluster.provider});
+}, {provider: kuebeconfigProvider});
 
-const prometheus = new k8s.helm.v3.Release("prometheus", {
-    chart: "oci://ghcr.io/prometheus-community/charts/prometheus",
-    version: "27.42.0",
+// Metrics Server for basic Kubernetes metrics (required for HPA)
+const metricsServer = new k8s.helm.v3.Release("metrics-server", {
+    chart: "metrics-server",
+    version: "3.13.0",
+    repositoryOpts: {
+        repo: "https://kubernetes-sigs.github.io/metrics-server/",
+    },
+    namespace: "kube-system",
+}, {provider: kuebeconfigProvider});
+
+// kube-prometheus-stack for comprehensive monitoring with Prometheus and Grafana
+// Includes DCGM dashboard (ID: 12239) for GPU metrics visualization
+const kubePrometheusStack = new k8s.helm.v3.Release("kube-prometheus-stack", {
+    chart: "kube-prometheus-stack",
+    version: "79.9.0",
+    repositoryOpts: {
+        repo: "https://prometheus-community.github.io/helm-charts",
+    },
     namespace: "monitoring",
     createNamespace: true,
     values: {
         alertmanager: {
             enabled: false,
         },
-        "prometheus-pushgateway": {
-            enabled: false,
+        prometheus: {
+            prometheusSpec: {
+                storageSpec: {
+                    volumeClaimTemplate: {
+                        spec: {
+                            storageClassName: storageClass.metadata.name,
+                            accessModes: ["ReadWriteOnce"],
+                            resources: {
+                                requests: {
+                                    storage: "50Gi",
+                                },
+                            },
+                        },
+                    },
+                },
+                // ServiceMonitor selector to pick up DCGM exporter
+                serviceMonitorSelectorNilUsesHelmValues: false,
+                podMonitorSelectorNilUsesHelmValues: false,
+            },
         },
-        "prometheus-node-exporter": {
-            enabled: false,
+        grafana: {
+            enabled: true,
+            adminPassword: "admin", // Change in production!
+            persistence: {
+                enabled: true,
+                storageClassName: storageClass.metadata.name,
+                size: "10Gi",
+            },
+            // Pre-provision NVIDIA DCGM dashboard
+            dashboardProviders: {
+                "dashboardproviders.yaml": {
+                    apiVersion: 1,
+                    providers: [
+                        {
+                            name: "nvidia-dcgm",
+                            orgId: 1,
+                            folder: "NVIDIA",
+                            type: "file",
+                            disableDeletion: false,
+                            editable: true,
+                            options: {
+                                path: "/var/lib/grafana/dashboards/nvidia-dcgm",
+                            },
+                        },
+                    ],
+                },
+            },
+            dashboards: {
+                "nvidia-dcgm": {
+                    "nvidia-dcgm-exporter": {
+                        gnetId: 12239,
+                        revision: 2,
+                        datasource: "Prometheus",
+                    },
+                },
+            },
+            sidecar: {
+                dashboards: {
+                    enabled: true,
+                },
+            },
         },
-        server: {
-            persistentVolume: {
-                storageClass: storageClass.metadata.name,
-            }
-        }
-    }
-}, {provider: cluster.provider, dependsOn: [storageClass, lwsChart]});
+        // Disable components not needed in EKS Auto Mode
+        kubeStateMetrics: {
+            enabled: true,
+        },
+        nodeExporter: {
+            enabled: true,
+        },
+        prometheusOperator: {
+            enabled: true,
+        },
+    },
+}, {provider: kuebeconfigProvider, dependsOn: [storageClass]});
 
-const huggingFaceSecret = new k8s.core.v1.Secret("huggingface-secret", {
-    metadata: {
-        name: "huggingface-token",
-        namespace: "lws-system",
+// NVIDIA DCGM Exporter for GPU metrics
+// EKS Auto Mode handles GPU drivers automatically, but we need DCGM exporter for metrics
+const dcgmExporter = new k8s.helm.v3.Release("dcgm-exporter", {
+    chart: "dcgm-exporter",
+    version: "4.7.0",
+    repositoryOpts: {
+        repo: "https://nvidia.github.io/dcgm-exporter/helm-charts",
     },
-    stringData: {
-        token: config.requireSecret("huggingface-token")
+    namespace: "monitoring",
+    values: {
+        serviceMonitor: {
+            enabled: true,
+            interval: "15s",
+            honorLabels: false,
+            additionalLabels: {
+                release: "kube-prometheus-stack",
+            },
+        },
+        // Tolerate GPU nodes
+        tolerations: [
+            {
+                key: "nvidia.com/gpu",
+                operator: "Exists",
+                effect: "NoSchedule",
+            },
+        ],
+        // Only run on GPU nodes
+        nodeSelector: {
+            "karpenter.sh/nodepool": "gpu-standard",
+        },
+        // Resource limits
+        resources: {
+            requests: {
+                cpu: "100m",
+                memory: "128Mi",
+            },
+            limits: {
+                cpu: "200m",
+                memory: "256Mi",
+            },
+        },
     },
-}, {provider: cluster.provider, dependsOn: [lwsChart]});
-*/
+}, {provider: kuebeconfigProvider, dependsOn: [kubePrometheusStack, gpuStandardNodePool]});
 
 const environmentResource = new pulumiservice.Environment("environmentResource", {
     name: clusterName + "-cluster",
