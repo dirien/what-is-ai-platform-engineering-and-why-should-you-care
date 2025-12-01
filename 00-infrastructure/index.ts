@@ -78,6 +78,28 @@ const gpuStandardNodePool = new KarpenterNodePoolComponent("gpu-standard", {
     },
 }, {provider: kuebeconfigProvider});
 
+// NodePool for large MoE models requiring 8x A100 80GB GPUs (Qwen3-Coder-480B)
+// p4de.24xlarge provides 8x A100 80GB GPUs with NVSwitch interconnect
+// Total: 640GB VRAM - required for 480B MoE models (~250GB for FP8)
+const gpuA100NodePool = new KarpenterNodePoolComponent("gpu-a100", {
+    instanceTypes: ["p4de.24xlarge"],
+    capacityTypes: ["on-demand"],
+    limits: {
+        cpu: 2000,
+    },
+    taints: [
+        {
+            key: "nvidia.com/gpu",
+            value: "true",
+            effect: "NoSchedule",
+        },
+    ],
+    disruption: {
+        consolidationPolicy: "WhenEmpty",
+        consolidateAfter: "5m",  // Longer consolidation for expensive instances
+    },
+}, {provider: kuebeconfigProvider});
+
 // Install KServe v0.16 with cert-manager, LLMInferenceService CRDs and resources
 // Uses Standard deployment mode to avoid Istio/Knative dependencies
 // Storage initializer memory is increased for large model downloads (Qwen2.5-7B is ~15GB)
@@ -86,13 +108,21 @@ const kserve = new KServeComponent("kserve", {
     kserveVersion: "v0.16.0",
     deploymentMode: "Standard",
     // Configure default ClusterStorageContainer resources for large model downloads
+    // Qwen3-Coder-480B is ~250GB, needs significant memory for download/extraction
     storageInitializer: {
-        memoryRequest: "8Gi",
-        memoryLimit: "16Gi",
-        cpuRequest: "1",
-        cpuLimit: "4",
+        memoryRequest: "16Gi",
+        memoryLimit: "64Gi",
+        cpuRequest: "2",
+        cpuLimit: "8",
     },
-}, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool]});
+    // Increase LLMInferenceService controller resources for managing multiple models
+    llmisvController: {
+        cpuRequest: "200m",
+        cpuLimit: "1",
+        memoryRequest: "512Mi",
+        memoryLimit: "2Gi",
+    },
+}, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool, gpuA100NodePool]});
 
 // Observability stack: Prometheus, Grafana, DCGM Exporter, Metrics Server
 // Provides GPU monitoring with pre-provisioned NVIDIA DCGM dashboard
@@ -115,13 +145,13 @@ const observability = new ObservabilityComponent("observability", {
         adminPassword: "admin", // Change in production!
         storageSize: "10Gi",
     },
-    // DCGM exporter for GPU metrics
+    // DCGM exporter for GPU metrics - runs on all GPU nodes via DaemonSet
     dcgmExporter: {
         enabled: true,
         version: "4.6.0",
-        // Only run on GPU nodes
+        // Only schedule on nodes that have GPUs (EKS labels GPU nodes with instance-gpu-manufacturer)
         nodeSelector: {
-            "karpenter.sh/nodepool": "gpu-standard",
+            "eks.amazonaws.com/instance-gpu-manufacturer": "nvidia",
         },
         // Tolerate GPU node taints
         tolerations: [
@@ -135,7 +165,7 @@ const observability = new ObservabilityComponent("observability", {
         memoryRequest: "512Mi",
         memoryLimit: "1Gi",
     },
-}, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool]});
+}, {provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool, gpuA100NodePool]});
 
 const environmentResource = new pulumiservice.Environment("environmentResource", {
     name: clusterName + "-cluster",
@@ -196,4 +226,55 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
         "--gpu_memory_utilization=0.9",
     ],
 }, {provider: kuebeconfigProvider});
+
+// TODO: Deploy Meta-Llama-3-8B-Instruct after accepting Meta's license
+// Llama 3 8B is Meta's instruction-tuned model with 8K context
+// Runs on G5 instances with A10G GPU (24GB VRAM)
+// Note: Requires accepting Meta's license at https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+// Reference: https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+// const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
+//     modelUri: "hf://meta-llama/Meta-Llama-3-8B-Instruct",
+//     modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
+//     namespace: "default",
+//     replicas: 1,
+//     resources: {
+//         cpuLimit: "4",
+//         memoryLimit: "32Gi",
+//         gpuCount: 1,
+//         cpuRequest: "2",
+//         memoryRequest: "16Gi",
+//     },
+//     // vLLM args for A10G GPU (24GB VRAM)
+//     args: [
+//         "--max_model_len=8192",
+//         "--gpu_memory_utilization=0.9",
+//     ],
+// }, {provider: kuebeconfigProvider});
+
+// TODO: Deploy Qwen3-Coder-480B-A35B-Instruct when p4de.24xlarge capacity is available
+// Qwen3-Coder is a 480B parameter MoE model (35B active) with 256K context
+// Requires 8x A100 80GB GPUs with tensor parallelism (~250GB for FP8)
+// Reference: https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct
+// const qwen3Coder = new LLMInferenceServiceComponent("qwen3-coder-480b", {
+//     modelUri: "hf://Qwen/Qwen3-Coder-480B-A35B-Instruct",
+//     modelName: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+//     namespace: "default",
+//     replicas: 1,
+//     resources: {
+//         cpuLimit: "96",
+//         memoryLimit: "512Gi",
+//         gpuCount: 8,  // Requires 8 GPUs for tensor parallelism
+//         cpuRequest: "48",
+//         memoryRequest: "256Gi",
+//     },
+//     // vLLM args for Qwen3-Coder with 8x GPU tensor parallelism and expert parallelism
+//     args: [
+//         "--tensor-parallel-size=8",
+//         "--enable-expert-parallel",
+//         "--max-model-len=32768",
+//         "--tool-call-parser=qwen3_coder",
+//         "--enable-auto-tool-choice",
+//         "--gpu_memory_utilization=0.9",
+//     ],
+// }, {provider: kuebeconfigProvider});
 
