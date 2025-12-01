@@ -1,0 +1,5 @@
+environment:
+- pulumi-idp/auth
+config:
+  aws:region: us-east-1
+  clusterName: demo-ai-idp-cluster
