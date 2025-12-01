@@ -1,0 +1,5 @@
+environment:
+  - self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
+config:
+  litellm-app-ecr:litellmMasterKey:
+    secure: AAABAEKRvBMg/hJqAx9OsjL5OLbKyPbKsHpbHRB3HNTxX8Ft9RrdZtS8G8MA7/idpl0F9gJpCDA+r9s=

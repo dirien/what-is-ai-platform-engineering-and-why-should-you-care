@@ -1,0 +1,3 @@
+name: litellm-app-ecr
+description: ECR repository and Docker image build for LiteLLM Model Discovery App
+runtime: nodejs
