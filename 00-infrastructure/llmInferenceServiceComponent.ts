@@ -452,7 +452,7 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
                     httpGet: {
                         path: "/health",
                         port: 8000,
-                        scheme: "HTTPS",
+                        scheme: "HTTP",
                     },
                     initialDelaySeconds: livenessProbe.initialDelaySeconds,
                     periodSeconds: livenessProbe.periodSeconds,

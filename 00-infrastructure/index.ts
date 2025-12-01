@@ -212,7 +212,7 @@ const kubePrometheusStack = new k8s.helm.v3.Release("kube-prometheus-stack", {
 // EKS Auto Mode handles GPU drivers automatically, but we need DCGM exporter for metrics
 const dcgmExporter = new k8s.helm.v3.Release("dcgm-exporter", {
     chart: "dcgm-exporter",
-    version: "4.7.0",
+    version: "4.6.0",
     repositoryOpts: {
         repo: "https://nvidia.github.io/dcgm-exporter/helm-charts",
     },
@@ -238,15 +238,15 @@ const dcgmExporter = new k8s.helm.v3.Release("dcgm-exporter", {
         nodeSelector: {
             "karpenter.sh/nodepool": "gpu-standard",
         },
-        // Resource limits
+        // Resource limits - DCGM exporter needs more memory on GPU nodes
         resources: {
             requests: {
                 cpu: "100m",
-                memory: "128Mi",
+                memory: "256Mi",
             },
             limits: {
-                cpu: "200m",
-                memory: "256Mi",
+                cpu: "500m",
+                memory: "512Mi",
             },
         },
     },
