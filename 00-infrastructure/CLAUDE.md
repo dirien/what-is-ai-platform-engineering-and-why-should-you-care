@@ -64,10 +64,60 @@ Set via `pulumi config set`:
 - `gpuInstanceArch` (optional) - CPU architecture (default: `"amd64"`)
 - `huggingface-token` (secret) - HuggingFace API token for model downloads
 
-## Commands
+## Pulumi ESC Commands
 
+**For AWS CLI operations** (SSO authentication):
+```bash
+pulumi env run pulumi-idp/auth -i -- <aws-command>
+# Example: pulumi env run pulumi-idp/auth -i -- aws sts get-caller-identity
+```
+
+**For kubectl operations** (cluster access via kubeconfig):
+```bash
+pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -- kubectl <command>
+# Example: pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -- kubectl get nodes
+# Example: pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -- kubectl get pods -A
+```
+
+**For Pulumi operations** (stack is configured in `Pulumi.dev.yaml`):
 ```bash
 pulumi stack select dev
 pulumi preview
-pulumi up
+pulumi up --yes
 ```
+
+> **Note:** Do NOT use `pulumi env` for `pulumi up` - the environment is already set in `Pulumi.dev.yaml`.
+
+### KServeComponent
+
+Component for installing KServe v0.16 with all dependencies. Located in `kserveComponent.ts`.
+
+**Installs:**
+- cert-manager (from Jetstack Helm repo)
+- kserve-crd (from OCI registry)
+- kserve controller (from OCI registry, includes all ClusterServingRuntimes)
+- llmisvc-crd (optional, for LLM features)
+
+**Args:**
+- `certManagerVersion?: string` - cert-manager version (default: `"v1.16.1"`)
+- `kserveVersion?: string` - KServe version (default: `"v0.16.0"`)
+- `deploymentMode?: "RawDeployment" | "Serverless"` - Deployment mode (default: `"RawDeployment"`)
+- `installServingRuntimes?: boolean` - Install LLMInferenceService CRDs (default: `true`)
+
+**Example:**
+```typescript
+const kserve = new KServeComponent("kserve", {
+    certManagerVersion: "v1.16.1",
+    kserveVersion: "v0.16.0",
+    deploymentMode: "RawDeployment",
+    installServingRuntimes: true,
+}, { provider: cluster.provider, dependsOn: [gpuStandardNodePool] });
+```
+
+## GPU Node Isolation
+
+GPU nodes are tainted to ensure only GPU workloads run on them:
+- **Taint:** `nvidia.com/gpu=true:NoSchedule`
+- **Label:** `node-type=gpu`
+
+Non-GPU workloads (cert-manager, kserve-controller, etc.) run on EKS Auto Mode general-purpose nodes.
