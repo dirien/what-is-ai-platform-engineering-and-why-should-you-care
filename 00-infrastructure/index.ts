@@ -5,6 +5,7 @@ import * as k8s from "@pulumi/kubernetes";
 import {SubnetType} from "@pulumi/awsx/ec2";
 import * as pulumiservice from "@pulumi/pulumiservice";
 import {AIModelComponent} from "./aiModelComponent";
+import {KarpenterNodePoolComponent} from "./karpenterNodePoolComponent";
 
 const config = new pulumi.Config();
 const clusterName = config.require("clusterName");
@@ -47,6 +48,7 @@ const cluster = new eks.Cluster("eks-auto-mode", {
 
 export const kubeconfig = pulumi.secret(cluster.kubeconfigJson)
 
+/*
 const gpuKarpeterNodePool = new k8s.apiextensions.CustomResource("gpu-node-pool", {
     apiVersion: "karpenter.sh/v1",
     kind: "NodePool",
@@ -109,7 +111,20 @@ const gpuKarpeterNodePool = new k8s.apiextensions.CustomResource("gpu-node-pool"
         },
     }
 }, {provider: cluster.provider});
+*/
+const gpuStandardNodePool = new KarpenterNodePoolComponent("gpu-standard", {
+    instanceTypes: ["g4dn.xlarge", "g5.xlarge"],
+    capacityTypes: ["on-demand"],
+    limits: {
+        cpu: 1000,
+    },
+    disruption: {
+        consolidationPolicy: "WhenEmpty",
+        consolidateAfter: "1m",
+    },
+}, {provider: cluster.provider});
 
+/*
 const lwsChart = new k8s.helm.v3.Release("lws", {
     chart: "oci://registry.k8s.io/lws/charts/lws",
     version: "0.7.0",
@@ -177,7 +192,7 @@ const huggingFaceSecret = new k8s.core.v1.Secret("huggingface-secret", {
         token: config.requireSecret("huggingface-token")
     },
 }, {provider: cluster.provider, dependsOn: [lwsChart]});
-
+*/
 
 const environmentResource = new pulumiservice.Environment("environmentResource", {
     name: clusterName + "-cluster",
@@ -198,13 +213,15 @@ values:
     KUBECONFIG: \${stackRefs.aws.kubeconfig}    
 `),
 }, {
-    dependsOn: [cluster, gpuKarpeterNodePool, lwsChart],
+    dependsOn: [cluster],
 });
 
 export const escName = pulumi.interpolate`${environmentResource.project}/${environmentResource.name}`
 
+/*
 const qwenModel = new AIModelComponent("qwen3-coder-30b-a3b-instruct", {
     size: "small",
     modelName: "Qwen/Qwen3-Coder-30B-A3B-Instruct", //"openai/gpt-oss-20b",
     monitoringEnabled: true,
 }, {provider: cluster.provider});
+*/
