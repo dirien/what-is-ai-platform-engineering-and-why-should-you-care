@@ -203,6 +203,20 @@ const huggingFaceSecret = new k8s.core.v1.Secret("hf-secret", {
     },
 }, {provider: kuebeconfigProvider});
 
+// Create ServiceAccount with access to HuggingFace secret
+// This SA will be used by pods that need to download gated models from HuggingFace
+const hfServiceAccount = new k8s.core.v1.ServiceAccount("hf-service-account", {
+    metadata: {
+        name: "hf-service-account",
+        namespace: "default",
+    },
+    secrets: [
+        {
+            name: "hf-secret",
+        },
+    ],
+}, {provider: kuebeconfigProvider, dependsOn: [huggingFaceSecret]});
+
 
 // Deploy Qwen2.5-7B-Instruct using KServe LLMInferenceService (v1alpha1)
 // Uses the new GenAI-first API with built-in router, gateway and scheduler
@@ -227,29 +241,29 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     ],
 }, {provider: kuebeconfigProvider});
 
-// TODO: Deploy Meta-Llama-3-8B-Instruct after accepting Meta's license
-// Llama 3 8B is Meta's instruction-tuned model with 8K context
+// Deploy Meta-Llama-3-8B-Instruct - Meta's instruction-tuned model with 8K context
 // Runs on G5 instances with A10G GPU (24GB VRAM)
-// Note: Requires accepting Meta's license at https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
 // Reference: https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
-// const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
-//     modelUri: "hf://meta-llama/Meta-Llama-3-8B-Instruct",
-//     modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
-//     namespace: "default",
-//     replicas: 1,
-//     resources: {
-//         cpuLimit: "4",
-//         memoryLimit: "32Gi",
-//         gpuCount: 1,
-//         cpuRequest: "2",
-//         memoryRequest: "16Gi",
-//     },
-//     // vLLM args for A10G GPU (24GB VRAM)
-//     args: [
-//         "--max_model_len=8192",
-//         "--gpu_memory_utilization=0.9",
-//     ],
-// }, {provider: kuebeconfigProvider});
+const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
+    modelUri: "hf://meta-llama/Meta-Llama-3-8B-Instruct",
+    modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
+    namespace: "default",
+    replicas: 1,
+    resources: {
+        cpuLimit: "4",
+        memoryLimit: "32Gi",
+        gpuCount: 1,
+        cpuRequest: "2",
+        memoryRequest: "16Gi",
+    },
+    // ServiceAccount with HF secret access for gated model downloads
+    serviceAccountName: "hf-service-account",
+    // vLLM args for A10G GPU (24GB VRAM)
+    args: [
+        "--max_model_len=8192",
+        "--gpu_memory_utilization=0.9",
+    ],
+}, {provider: kuebeconfigProvider, dependsOn: [hfServiceAccount]});
 
 // TODO: Deploy Qwen3-Coder-480B-A35B-Instruct when p4de.24xlarge capacity is available
 // Qwen3-Coder is a 480B parameter MoE model (35B active) with 256K context
