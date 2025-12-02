@@ -33,14 +33,15 @@ const ModelUsageModal = ({ model, onClose }) => {
       });
 
       // Filter logs for this specific model
+      // LiteLLM uses model_group for the model name in spend logs
       const modelLogs = (logsResponse.data || []).filter(
-        log => log.model === model.name || log.model_id === model.name
+        log => log.model_group === model.name || log.model === model.name || log.model_id === model.name
       );
 
       setSpendLogs(modelLogs);
 
       // Calculate aggregated usage data
-      const totalSpend = modelLogs.reduce((sum, log) => sum + (log.spend || 0), 0);
+      const totalSpend = modelLogs.reduce((sum, log) => sum + (typeof log.spend === 'number' ? log.spend : 0), 0);
       const totalRequests = modelLogs.length;
       const totalTokens = modelLogs.reduce((sum, log) =>
         sum + (log.total_tokens || log.usage?.total_tokens || 0), 0

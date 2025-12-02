@@ -17,9 +17,16 @@ const Subscriptions = () => {
     setError(null);
 
     try {
-      const keysResponse = await axios.get('/api/keys');
-      const keys = keysResponse.data.data || [];
+      // Fetch both keys and spend logs
+      const [keysResponse, logsResponse] = await Promise.all([
+        axios.get('/api/keys'),
+        axios.get('/api/spend/logs').catch(() => ({ data: [] }))
+      ]);
 
+      const keys = keysResponse.data.data || [];
+      const logs = logsResponse.data || [];
+
+      // Build model map from keys (for key count)
       const modelMap = new Map();
 
       keys.forEach(key => {
@@ -28,17 +35,26 @@ const Subscriptions = () => {
           if (modelMap.has(modelName)) {
             const existing = modelMap.get(modelName);
             existing.keyCount += 1;
-            existing.totalSpend += key.usage_count || 0;
             existing.keys.push(key);
           } else {
             modelMap.set(modelName, {
               name: modelName,
               keyCount: 1,
-              totalSpend: key.usage_count || 0,
+              totalSpend: 0, // Will be calculated from logs
               keys: [key]
             });
           }
         });
+      });
+
+      // Calculate per-model spend from logs
+      // LiteLLM uses model_group for the model name in logs
+      logs.forEach(log => {
+        const modelName = log.model_group || log.model || log.model_id;
+        if (modelName && modelMap.has(modelName)) {
+          const existing = modelMap.get(modelName);
+          existing.totalSpend += typeof log.spend === 'number' ? log.spend : 0;
+        }
       });
 
       const modelsArray = Array.from(modelMap.values()).sort(
