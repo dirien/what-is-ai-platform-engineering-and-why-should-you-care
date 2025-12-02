@@ -70,7 +70,7 @@ const ApiKeys = () => {
 
   const handleDeleteKey = async (keyId) => {
     try {
-      await axios.delete(`/api/keys/${keyId}`);
+      await axios.delete(`/api/keys/${encodeURIComponent(keyId)}`);
       setApiKeys(apiKeys.filter(k => k.id !== keyId));
       setKeyToDelete(null);
     } catch (err) {
@@ -80,7 +80,7 @@ const ApiKeys = () => {
 
   const viewKeyDetails = async (keyId) => {
     try {
-      const response = await axios.get(`/api/keys/${keyId}`);
+      const response = await axios.get(`/api/keys/${encodeURIComponent(keyId)}`);
       setSelectedKeyForDetail(response.data);
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to fetch key details');
@@ -89,7 +89,7 @@ const ApiKeys = () => {
 
   const editKey = async (keyId) => {
     try {
-      const response = await axios.get(`/api/keys/${keyId}`);
+      const response = await axios.get(`/api/keys/${encodeURIComponent(keyId)}`);
       setSelectedKeyForEdit(response.data);
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to fetch key details');

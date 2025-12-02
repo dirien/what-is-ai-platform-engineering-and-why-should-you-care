@@ -44,7 +44,7 @@ const EditApiKeyModal = ({ apiKey, onClose, onKeyUpdated, availableModels, loadi
     setIsSubmitting(true);
 
     try {
-      const response = await axios.put(`/api/keys/${apiKey.id}`, {
+      const response = await axios.put(`/api/keys/${encodeURIComponent(apiKey.id)}`, {
         name: name.trim(),
         models: selectedModels
       });

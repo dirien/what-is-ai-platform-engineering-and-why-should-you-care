@@ -26,7 +26,7 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
 
     try {
       // Delete the old key
-      await axios.delete(`/api/keys/${apiKey.id}`);
+      await axios.delete(`/api/keys/${encodeURIComponent(apiKey.id)}`);
 
       // Create a new key with the same configuration
       const response = await axios.post('/api/keys', {
@@ -207,8 +207,8 @@ main();`;
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500 mb-1">Usage Count</p>
-                  <p className="text-sm text-gray-900 font-medium">{apiKey.usage_count.toLocaleString()} requests</p>
+                  <p className="text-xs text-gray-500 mb-1">Total Spend</p>
+                  <p className="text-sm text-gray-900 font-medium">${typeof apiKey.usage_count === 'number' ? apiKey.usage_count.toFixed(4) : '0.0000'}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Models</p>

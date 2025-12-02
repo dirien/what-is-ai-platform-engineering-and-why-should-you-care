@@ -76,7 +76,8 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       let outputTokens = 0;
 
       keyLogs.forEach(log => {
-        totalSpend += log.spend || 0;
+        // Use spend value from LiteLLM which is already calculated
+        totalSpend += typeof log.spend === 'number' ? log.spend : 0;
         totalTokens += log.total_tokens || log.usage?.total_tokens || 0;
         inputTokens += log.prompt_tokens || log.usage?.prompt_tokens || 0;
         outputTokens += log.completion_tokens || log.usage?.completion_tokens || 0;
@@ -90,7 +91,7 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       keyLogs.forEach(log => {
         const date = new Date(log.startTime || log.created_at || log.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const existing = spendByDayMap.get(date) || { date, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += log.spend || 0;
+        existing.spend += typeof log.spend === 'number' ? log.spend : 0;
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByDayMap.set(date, existing);
@@ -100,9 +101,9 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       // Group by model
       const spendByModelMap = new Map();
       keyLogs.forEach(log => {
-        const model = log.model || log.model_id || 'Unknown';
+        const model = log.model_group || log.model || log.model_id || 'Unknown';
         const existing = spendByModelMap.get(model) || { model, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += log.spend || 0;
+        existing.spend += typeof log.spend === 'number' ? log.spend : 0;
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByModelMap.set(model, existing);
@@ -116,9 +117,9 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
         .reverse()
         .map(log => ({
           date: new Date(log.startTime || log.created_at || log.timestamp).toLocaleString(),
-          model: log.model || log.model_id || 'Unknown',
+          model: log.model_group || log.model || log.model_id || 'Unknown',
           tokens: log.total_tokens || log.usage?.total_tokens || 0,
-          spend: log.spend || 0
+          spend: typeof log.spend === 'number' ? log.spend : 0
         }));
 
       setUsageData({
