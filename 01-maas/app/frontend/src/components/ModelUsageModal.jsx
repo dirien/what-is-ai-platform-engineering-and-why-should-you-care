@@ -23,26 +23,68 @@ const ModelUsageModal = ({ model, onClose }) => {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 30);
 
-      // Fetch spend logs for this model
-      const logsResponse = await axios.get('/api/spend/logs', {
-        params: {
-          start_date: startDate.toISOString(),
-          end_date: endDate.toISOString(),
-          summarize: false
+      // Fetch spend logs and model info (for pricing) in parallel
+      const [logsResponse, modelInfoResponse] = await Promise.all([
+        axios.get('/api/spend/logs', {
+          params: {
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString(),
+            summarize: false
+          }
+        }),
+        axios.get('/api/model-info').catch(() => ({ data: { data: [] } }))
+      ]);
+
+      // Build pricing map from model info
+      const modelInfoData = modelInfoResponse.data?.data || [];
+      const pricingMap = new Map();
+      modelInfoData.forEach(m => {
+        const modelName = m.model_name || m.model_info?.id;
+        if (modelName) {
+          pricingMap.set(modelName, {
+            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
+            outputCostPerToken: m.model_info?.output_cost_per_token || 0
+          });
         }
       });
 
+      // Helper function to calculate spend from log
+      const calculateSpend = (log) => {
+        // Use log.spend if available and > 0
+        if (typeof log.spend === 'number' && log.spend > 0) {
+          return log.spend;
+        }
+
+        // Calculate from tokens using pricing
+        const modelName = log.model_group || log.model || log.model_id;
+        const pricing = pricingMap.get(modelName);
+        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
+          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
+          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
+          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
+        }
+
+        return 0;
+      };
+
       // Filter logs for this specific model
+      // LiteLLM uses model_group for the model name in spend logs
       const modelLogs = (logsResponse.data || []).filter(
-        log => log.model === model.name || log.model_id === model.name
+        log => log.model_group === model.name || log.model === model.name || log.model_id === model.name
       );
 
-      setSpendLogs(modelLogs);
+      // Update logs with calculated spend for display
+      const logsWithSpend = modelLogs.map(log => ({
+        ...log,
+        calculatedSpend: calculateSpend(log)
+      }));
+
+      setSpendLogs(logsWithSpend);
 
       // Calculate aggregated usage data
-      const totalSpend = modelLogs.reduce((sum, log) => sum + (log.spend || 0), 0);
-      const totalRequests = modelLogs.length;
-      const totalTokens = modelLogs.reduce((sum, log) =>
+      const totalSpend = logsWithSpend.reduce((sum, log) => sum + log.calculatedSpend, 0);
+      const totalRequests = logsWithSpend.length;
+      const totalTokens = logsWithSpend.reduce((sum, log) =>
         sum + (log.total_tokens || log.usage?.total_tokens || 0), 0
       );
 
@@ -267,7 +309,7 @@ const ModelUsageModal = ({ model, onClose }) => {
                                   {(log.total_tokens || log.usage?.total_tokens || 0).toLocaleString()}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900">
-                                  ${(log.spend || 0).toFixed(6)}
+                                  ${(log.calculatedSpend || log.spend || 0).toFixed(6)}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-500 font-mono">
                                   {log.api_key ? `${log.api_key.substring(0, 12)}...` : 'N/A'}

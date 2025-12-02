@@ -124,9 +124,15 @@ const FinOpsDashboard = () => {
         pricingMap.set(modelName, pricing);
       });
 
-      // Helper function to calculate spend from tokens
+      // Helper function to get spend from log
       const calculateSpend = (log) => {
-        // Use model_group if available (LiteLLM includes this), otherwise fall back to model
+        // Use the spend value from LiteLLM which is already calculated accurately
+        // This is more reliable than recalculating from tokens
+        if (typeof log.spend === 'number' && log.spend > 0) {
+          return log.spend;
+        }
+
+        // Fall back to calculating from tokens if spend is not available
         const modelGroup = log.model_group || log.model || 'Unknown';
         const pricing = pricingMap.get(modelGroup);
 
@@ -135,8 +141,8 @@ const FinOpsDashboard = () => {
           const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
           return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
         }
-        // Fall back to spend value if no pricing found
-        return log.spend || 0;
+
+        return 0;
       };
 
       // Calculate summary metrics

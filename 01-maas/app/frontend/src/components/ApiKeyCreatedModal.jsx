@@ -5,7 +5,22 @@ const ApiKeyCreatedModal = ({ apiKey, onClose }) => {
 
   const copyToClipboard = async () => {
     try {
-      await navigator.clipboard.writeText(apiKey.key);
+      // Try modern clipboard API first (requires HTTPS)
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(apiKey.key);
+      } else {
+        // Fallback for HTTP: use execCommand
+        const textArea = document.createElement('textarea');
+        textArea.value = apiKey.key;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {

@@ -111,6 +111,35 @@ app.get('/api/public-model-hub', async (req, res) => {
   }
 });
 
+// Update model pricing in LiteLLM
+app.put('/api/models/:modelId/pricing', async (req, res) => {
+  try {
+    const { inputCostPerToken, outputCostPerToken } = req.body;
+    const modelId = req.params.modelId;
+
+    const headers = {
+      'Authorization': `Bearer ${LITELLM_MASTER_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    // LiteLLM uses /model/update endpoint to update model configuration
+    const response = await axios.post(`${LITELLM_API_BASE}/model/update`, {
+      model_id: modelId,
+      model_info: {
+        input_cost_per_token: inputCostPerToken,
+        output_cost_per_token: outputCostPerToken
+      }
+    }, { headers });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error updating model pricing:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message || 'Failed to update model pricing'
+    });
+  }
+});
+
 // API Key Management Endpoints - LiteLLM Integration
 
 // Get all API keys from LiteLLM (list all keys)
@@ -133,28 +162,43 @@ app.get('/api/keys', async (req, res) => {
 
     // Transform LiteLLM response to our format
     const keys = response.data.keys || [];
-    const maskedKeys = keys.map(key => {
-      // Try multiple fields for the key name
-      const keyName = key.key_alias ||
-                      key.key_name ||
-                      key.metadata?.name ||
-                      key.metadata?.key_alias ||
-                      (key.key ? key.key.substring(0, 20) : 'Unnamed Key');
 
-      // Use the actual key as the ID (needed for API operations like delete/update/info)
-      // Mask the key for display in the list view
-      const maskedKey = key.key ? `${key.key.substring(0, 12)}...${key.key.substring(key.key.length - 4)}` : 'sk-...****';
+    // Log the first key to understand the structure
+    if (keys.length > 0) {
+      console.log('LiteLLM key/list first key structure:', JSON.stringify(keys[0], null, 2));
+    }
 
-      return {
-        id: key.key, // Full key value needed for API operations
-        name: keyName,
-        key: maskedKey, // Masked for display in list
-        models: key.models || [],
-        created_at: key.created_at || new Date().toISOString(),
-        last_used: key.last_used_at,
-        usage_count: key.spend || 0
-      };
-    });
+    const maskedKeys = keys
+      // Filter out keys without a valid identifier (token is the hash used for API operations)
+      .filter(key => key.token)
+      .map(key => {
+        // token is the hash identifier used for LiteLLM API operations (delete, update, info)
+        // key is the actual API key (sk-...) but may not always be returned
+        const keyToken = key.token;
+        const keyValue = key.key || key.token;
+
+        // Try multiple fields for the key name
+        const keyName = key.key_alias ||
+                        key.key_name ||
+                        key.metadata?.name ||
+                        key.metadata?.key_alias ||
+                        'Unnamed Key';
+
+        // Mask the key for display in the list view
+        const maskedKey = key.key
+          ? `${key.key.substring(0, 12)}...${key.key.substring(key.key.length - 4)}`
+          : `${keyToken.substring(0, 12)}...`;
+
+        return {
+          id: keyToken, // Use token hash for API operations (delete/update/info)
+          name: keyName,
+          key: maskedKey, // Masked for display in list
+          models: key.models || [],
+          created_at: key.created_at || new Date().toISOString(),
+          last_used: key.last_used_at,
+          usage_count: key.spend || 0
+        };
+      });
 
     res.json({ data: maskedKeys });
   } catch (error) {
@@ -174,28 +218,52 @@ app.get('/api/keys/:token', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
+    // The token parameter is the key hash (token) from LiteLLM
     const response = await axios.get(`${LITELLM_API_BASE}/key/info?key=${req.params.token}`, { headers });
     const keyData = response.data;
 
     console.log('LiteLLM key info response:', JSON.stringify(keyData, null, 2));
 
-    // Try multiple fields for the key name
-    const keyName = keyData.key_alias ||
-                    keyData.key_name ||
-                    keyData.metadata?.name ||
-                    keyData.metadata?.key_alias ||
-                    (keyData.key ? keyData.key.substring(0, 20) : 'Unnamed Key');
+    // LiteLLM returns { key: "token_hash", info: { ...actual data... } }
+    // The actual key info is nested inside the "info" field
+    const info = keyData.info || keyData;
+
+    // Try multiple fields for the key name (from info object)
+    const keyName = info.key_alias ||
+                    info.key_name ||
+                    info.metadata?.name ||
+                    info.metadata?.key_alias ||
+                    'Unnamed Key';
+
+    // Use the token hash for API operations
+    const keyToken = keyData.key || req.params.token;
+
+    // Get last used from spend logs for this key
+    let lastUsed = null;
+    try {
+      const logsResponse = await axios.get(`${LITELLM_API_BASE}/spend/logs`, {
+        headers,
+        params: { api_key: keyToken, summarize: false }
+      });
+      const logs = Array.isArray(logsResponse.data) ? logsResponse.data : [];
+      if (logs.length > 0) {
+        // Find the most recent log entry
+        const sortedLogs = logs.sort((a, b) => new Date(b.startTime || b.endTime) - new Date(a.startTime || a.endTime));
+        lastUsed = sortedLogs[0].startTime || sortedLogs[0].endTime;
+      }
+    } catch (e) {
+      console.log('Could not fetch logs for last_used:', e.message);
+    }
 
     // Transform to our format
-    // Return the full key value for detail view
     const transformedKey = {
-      id: keyData.key, // Full key value needed for API operations
+      id: keyToken, // Token hash for API operations
       name: keyName,
-      key: keyData.key, // Full key value for detail view
-      models: keyData.models || [],
-      created_at: keyData.created_at || new Date().toISOString(),
-      last_used: keyData.last_used_at,
-      usage_count: keyData.spend || 0
+      key: keyToken, // Token hash (actual sk-... key is not returned by /key/info)
+      models: info.models || [],
+      created_at: info.created_at || new Date().toISOString(),
+      last_used: lastUsed || info.last_used_at,
+      usage_count: info.spend || 0
     };
 
     res.json(transformedKey);
@@ -242,17 +310,18 @@ app.post('/api/keys', async (req, res) => {
 
     // Transform to our format
     // key: the actual API key starting with sk-...
+    // token: the hash identifier used for API operations
     const newKey = {
-      id: keyData.key, // Full key value needed for API operations
+      id: keyData.token || keyData.key, // Use token for API operations (falls back to key)
       name: name,
-      key: keyData.key, // The actual sk-... key from LiteLLM
+      key: keyData.key, // The actual sk-... key from LiteLLM (for display to user)
       models: models,
       created_at: keyData.created_at || new Date().toISOString(),
       last_used: null,
       usage_count: 0
     };
 
-    console.log('Returning new key to frontend:', JSON.stringify({ ...newKey, key: newKey.key.substring(0, 20) + '...' }, null, 2));
+    console.log('Returning new key to frontend:', JSON.stringify({ ...newKey, key: newKey.key?.substring(0, 20) + '...' }, null, 2));
 
     res.status(201).json(newKey);
   } catch (error) {
