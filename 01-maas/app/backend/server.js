@@ -133,11 +133,19 @@ app.get('/api/keys', async (req, res) => {
 
     // Transform LiteLLM response to our format
     const keys = response.data.keys || [];
+
+    // Log the first key to understand the structure
+    if (keys.length > 0) {
+      console.log('LiteLLM key/list first key structure:', JSON.stringify(keys[0], null, 2));
+    }
+
     const maskedKeys = keys
-      // Filter out keys without a valid key value (token)
-      .filter(key => key.key || key.token)
+      // Filter out keys without a valid identifier (token is the hash used for API operations)
+      .filter(key => key.token)
       .map(key => {
-        // Use key.key or key.token as the identifier
+        // token is the hash identifier used for LiteLLM API operations (delete, update, info)
+        // key is the actual API key (sk-...) but may not always be returned
+        const keyToken = key.token;
         const keyValue = key.key || key.token;
 
         // Try multiple fields for the key name
@@ -145,14 +153,15 @@ app.get('/api/keys', async (req, res) => {
                         key.key_name ||
                         key.metadata?.name ||
                         key.metadata?.key_alias ||
-                        (keyValue ? keyValue.substring(0, 20) : 'Unnamed Key');
+                        'Unnamed Key';
 
-        // Use the actual key as the ID (needed for API operations like delete/update/info)
         // Mask the key for display in the list view
-        const maskedKey = keyValue ? `${keyValue.substring(0, 12)}...${keyValue.substring(keyValue.length - 4)}` : 'sk-...****';
+        const maskedKey = key.key
+          ? `${key.key.substring(0, 12)}...${key.key.substring(key.key.length - 4)}`
+          : `${keyToken.substring(0, 12)}...`;
 
         return {
-          id: keyValue, // Full key value needed for API operations
+          id: keyToken, // Use token hash for API operations (delete/update/info)
           name: keyName,
           key: maskedKey, // Masked for display in list
           models: key.models || [],
@@ -180,6 +189,7 @@ app.get('/api/keys/:token', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
+    // The token parameter is the key hash (token) from LiteLLM
     const response = await axios.get(`${LITELLM_API_BASE}/key/info?key=${req.params.token}`, { headers });
     const keyData = response.data;
 
@@ -190,14 +200,16 @@ app.get('/api/keys/:token', async (req, res) => {
                     keyData.key_name ||
                     keyData.metadata?.name ||
                     keyData.metadata?.key_alias ||
-                    (keyData.key ? keyData.key.substring(0, 20) : 'Unnamed Key');
+                    'Unnamed Key';
+
+    // Use token for API operations, key for display if available
+    const keyToken = keyData.token || req.params.token;
 
     // Transform to our format
-    // Return the full key value for detail view
     const transformedKey = {
-      id: keyData.key, // Full key value needed for API operations
+      id: keyToken, // Token hash for API operations
       name: keyName,
-      key: keyData.key, // Full key value for detail view
+      key: keyData.key || keyToken, // Full key value for detail view (or token if key not available)
       models: keyData.models || [],
       created_at: keyData.created_at || new Date().toISOString(),
       last_used: keyData.last_used_at,
@@ -248,17 +260,18 @@ app.post('/api/keys', async (req, res) => {
 
     // Transform to our format
     // key: the actual API key starting with sk-...
+    // token: the hash identifier used for API operations
     const newKey = {
-      id: keyData.key, // Full key value needed for API operations
+      id: keyData.token || keyData.key, // Use token for API operations (falls back to key)
       name: name,
-      key: keyData.key, // The actual sk-... key from LiteLLM
+      key: keyData.key, // The actual sk-... key from LiteLLM (for display to user)
       models: models,
       created_at: keyData.created_at || new Date().toISOString(),
       last_used: null,
       usage_count: 0
     };
 
-    console.log('Returning new key to frontend:', JSON.stringify({ ...newKey, key: newKey.key.substring(0, 20) + '...' }, null, 2));
+    console.log('Returning new key to frontend:', JSON.stringify({ ...newKey, key: newKey.key?.substring(0, 20) + '...' }, null, 2));
 
     res.status(201).json(newKey);
   } catch (error) {
