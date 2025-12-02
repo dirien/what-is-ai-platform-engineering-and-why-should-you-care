@@ -1,0 +1,19 @@
+{
+    "name": "litellm-app-ecr",
+    "version": "1.0.0",
+    "description": "ECR repository and Docker image build for LiteLLM Model Discovery App",
+    "main": "index.ts",
+    "scripts": {
+        "build": "tsc"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "typescript": "^5.0.0"
+    },
+    "dependencies": {
+        "@pulumi/aws": "^7.11.0",
+        "@pulumi/docker-build": "^0.0.9",
+        "@pulumi/kubernetes": "^4.18.0",
+        "@pulumi/pulumi": "^3.206.0"
+    }
+}

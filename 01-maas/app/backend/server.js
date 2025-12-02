@@ -2,8 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -12,6 +17,10 @@ const LITELLM_MASTER_KEY = process.env.LITELLM_MASTER_KEY || 'sk-litellm-master-
 
 app.use(cors());
 app.use(express.json());
+
+// Serve static frontend files in production
+const frontendDistPath = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(frontendDistPath));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -372,7 +381,13 @@ app.get('/api/spend/logs', async (req, res) => {
   }
 });
 
+// Catch-all route - serve index.html for client-side routing (must be after all API routes)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendDistPath, 'index.html'));
+});
+
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
   console.log(`LiteLLM API Base: ${LITELLM_API_BASE}`);
+  console.log(`Serving frontend from: ${frontendDistPath}`);
 });

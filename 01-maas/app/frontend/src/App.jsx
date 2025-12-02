@@ -9,9 +9,9 @@ function App() {
   const [activeTab, setActiveTab] = useState('models');
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-cream-100">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto gradient-subtle">
         {activeTab === 'models' && <Models />}
         {activeTab === 'api-keys' && <ApiKeys />}
         {activeTab === 'subscriptions' && <Subscriptions />}
