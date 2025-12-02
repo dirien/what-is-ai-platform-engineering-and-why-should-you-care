@@ -363,6 +363,7 @@ app.get('/api/spend/report', async (req, res) => {
 });
 
 // Get spend logs
+// LiteLLM /spend/logs with summarize=false returns individual request logs
 app.get('/api/spend/logs', async (req, res) => {
   try {
     const headers = {
@@ -370,16 +371,37 @@ app.get('/api/spend/logs', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
+    // Build params - use summarize=false to get individual logs instead of aggregated data
+    // Don't pass date params - LiteLLM date filtering is unreliable, filter client-side instead
+    const params = { summarize: false };
+
     const response = await axios.get(`${LITELLM_API_BASE}/spend/logs`, {
       headers,
-      params: req.query // Forward query params like api_key, start_date, end_date, etc.
+      params
     });
 
-    res.json(response.data);
+    // Ensure we always return an array
+    let data = response.data;
+    if (!Array.isArray(data)) {
+      if (data && typeof data === 'object' && Array.isArray(data.logs)) {
+        data = data.logs;
+      } else if (data && typeof data === 'object' && Array.isArray(data.data)) {
+        data = data.data;
+      } else {
+        return res.json([]);
+      }
+    }
+
+    res.json(data);
   } catch (error) {
     console.error('Error fetching spend logs:', error.response?.data || error.message);
+    // Return empty array instead of error for graceful degradation
+    if (error.response?.status === 404 || error.response?.status === 400) {
+      return res.json([]);
+    }
     res.status(error.response?.status || 500).json({
-      error: error.response?.data?.error || error.message || 'Failed to fetch spend logs'
+      error: error.response?.data?.error || error.message || 'Failed to fetch spend logs',
+      data: [] // Include empty data array for fallback
     });
   }
 });

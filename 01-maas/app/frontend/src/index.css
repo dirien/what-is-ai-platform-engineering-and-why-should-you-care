@@ -82,6 +82,18 @@
     @apply bg-charcoal-100 text-charcoal-600 border border-charcoal-200;
   }
 
+  .badge-sage {
+    @apply bg-sage-100 text-sage-700 border border-sage-200;
+  }
+
+  .badge-amber {
+    @apply bg-amber-100 text-amber-700 border border-amber-200;
+  }
+
+  .badge-blue {
+    @apply bg-blue-100 text-blue-700 border border-blue-200;
+  }
+
   /* Stat card styling */
   .stat-card {
     @apply bg-white rounded-xl p-4 border border-charcoal-100/50;
