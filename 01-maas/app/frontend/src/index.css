@@ -139,3 +139,8 @@ code {
   font-family: 'SF Mono', 'Fira Code', Consolas, Monaco, monospace;
   @apply text-sm bg-charcoal-100 px-1.5 py-0.5 rounded;
 }
+
+/* Code inside pre blocks should not have background */
+pre code {
+  @apply bg-transparent p-0 rounded-none;
+}

@@ -53,16 +53,51 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
           startDate.setDate(startDate.getDate() - 30);
       }
 
-      // Fetch spend logs for this API key
-      const logsResponse = await axios.get('/api/spend/logs', {
-        params: {
-          api_key: apiKey.id,
-          start_date: startDate.toISOString(),
-          end_date: endDate.toISOString()
+      // Fetch spend logs and model info (for pricing) in parallel
+      const [logsResponse, modelInfoResponse] = await Promise.all([
+        axios.get('/api/spend/logs', {
+          params: {
+            api_key: apiKey.id,
+            start_date: startDate.toISOString(),
+            end_date: endDate.toISOString()
+          }
+        }),
+        axios.get('/api/model-info').catch(() => ({ data: { data: [] } }))
+      ]);
+
+      const logs = logsResponse.data || [];
+
+      // Build pricing map from model info
+      const modelInfoData = modelInfoResponse.data?.data || [];
+      const pricingMap = new Map();
+      modelInfoData.forEach(m => {
+        const modelName = m.model_name || m.model_info?.id;
+        if (modelName) {
+          pricingMap.set(modelName, {
+            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
+            outputCostPerToken: m.model_info?.output_cost_per_token || 0
+          });
         }
       });
 
-      const logs = logsResponse.data || [];
+      // Helper function to calculate spend from log
+      const calculateSpend = (log) => {
+        // Use log.spend if available and > 0
+        if (typeof log.spend === 'number' && log.spend > 0) {
+          return log.spend;
+        }
+
+        // Calculate from tokens using pricing
+        const modelName = log.model_group || log.model || log.model_id;
+        const pricing = pricingMap.get(modelName);
+        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
+          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
+          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
+          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
+        }
+
+        return 0;
+      };
 
       // Filter logs for this specific key
       const keyLogs = logs.filter(log =>
@@ -76,8 +111,8 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       let outputTokens = 0;
 
       keyLogs.forEach(log => {
-        // Use spend value from LiteLLM which is already calculated
-        totalSpend += typeof log.spend === 'number' ? log.spend : 0;
+        // Calculate spend from tokens using pricing when log.spend is 0
+        totalSpend += calculateSpend(log);
         totalTokens += log.total_tokens || log.usage?.total_tokens || 0;
         inputTokens += log.prompt_tokens || log.usage?.prompt_tokens || 0;
         outputTokens += log.completion_tokens || log.usage?.completion_tokens || 0;
@@ -91,7 +126,7 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       keyLogs.forEach(log => {
         const date = new Date(log.startTime || log.created_at || log.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const existing = spendByDayMap.get(date) || { date, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += typeof log.spend === 'number' ? log.spend : 0;
+        existing.spend += calculateSpend(log);
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByDayMap.set(date, existing);
@@ -103,7 +138,7 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       keyLogs.forEach(log => {
         const model = log.model_group || log.model || log.model_id || 'Unknown';
         const existing = spendByModelMap.get(model) || { model, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += typeof log.spend === 'number' ? log.spend : 0;
+        existing.spend += calculateSpend(log);
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByModelMap.set(model, existing);
@@ -119,7 +154,7 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
           date: new Date(log.startTime || log.created_at || log.timestamp).toLocaleString(),
           model: log.model_group || log.model || log.model_id || 'Unknown',
           tokens: log.total_tokens || log.usage?.total_tokens || 0,
-          spend: typeof log.spend === 'number' ? log.spend : 0
+          spend: calculateSpend(log)
         }));
 
       setUsageData({

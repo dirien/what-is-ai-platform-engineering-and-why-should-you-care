@@ -1,23 +1,99 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
-  const [showFullKey, setShowFullKey] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenerateError, setRegenerateError] = useState(null);
+  const [calculatedSpend, setCalculatedSpend] = useState(0);
+  const [copiedExample, setCopiedExample] = useState(null);
+
+  // Fetch spend data when modal opens
+  useEffect(() => {
+    if (apiKey) {
+      fetchSpendData();
+    }
+  }, [apiKey]);
+
+  const fetchSpendData = async () => {
+    try {
+      const [logsResponse, modelInfoResponse] = await Promise.all([
+        axios.get('/api/spend/logs').catch(() => ({ data: [] })),
+        axios.get('/api/model-info').catch(() => ({ data: { data: [] } }))
+      ]);
+
+      const logs = logsResponse.data || [];
+      const modelInfoData = modelInfoResponse.data?.data || [];
+
+      // Build pricing map
+      const pricingMap = new Map();
+      modelInfoData.forEach(m => {
+        const modelName = m.model_name || m.model_info?.id;
+        if (modelName) {
+          pricingMap.set(modelName, {
+            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
+            outputCostPerToken: m.model_info?.output_cost_per_token || 0
+          });
+        }
+      });
+
+      // Calculate spend from logs
+      const calculateSpend = (log) => {
+        if (typeof log.spend === 'number' && log.spend > 0) {
+          return log.spend;
+        }
+        const modelName = log.model_group || log.model || log.model_id;
+        const pricing = pricingMap.get(modelName);
+        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
+          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
+          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
+          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
+        }
+        return 0;
+      };
+
+      // Filter logs for this key and calculate total spend
+      const keyLogs = logs.filter(log =>
+        log.api_key === apiKey.id || (log.api_key && apiKey.id && log.api_key.includes(apiKey.id.substring(0, 16)))
+      );
+
+      const totalSpend = keyLogs.reduce((sum, log) => sum + calculateSpend(log), 0);
+      setCalculatedSpend(totalSpend);
+    } catch (err) {
+      console.error('Error fetching spend data:', err);
+    }
+  };
 
   if (!apiKey) return null;
 
-  const displayKey = showFullKey
-    ? apiKey.key
-    : `${apiKey.key.substring(0, 12)}...${apiKey.key.substring(apiKey.key.length - 4)}`;
+  // Safe access to models array
+  const models = apiKey.models || [];
+  const keyName = apiKey.name || 'Unnamed Key';
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  // Fallback copy function that works over HTTP
+  const copyToClipboard = async (text, exampleType) => {
+    try {
+      // Try modern clipboard API first (requires HTTPS)
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for HTTP: use execCommand
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedExample(exampleType);
+      setTimeout(() => setCopiedExample(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
   };
 
   const handleRegenerate = async () => {
@@ -30,8 +106,8 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
 
       // Create a new key with the same configuration
       const response = await axios.post('/api/keys', {
-        name: apiKey.name,
-        models: apiKey.models
+        name: keyName,
+        models: models
       });
 
       // Call the callback with the new key
@@ -49,11 +125,13 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
     }
   };
 
+  const defaultModel = models[0] || 'gpt-3.5-turbo';
+
   const curlExample = `curl https://api.acme-inc.com/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${apiKey.key}" \\
   -d '{
-    "model": "${apiKey.models[0] || 'gpt-3.5-turbo'}",
+    "model": "${defaultModel}",
     "messages": [
       {
         "role": "user",
@@ -70,7 +148,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="${apiKey.models[0] || 'gpt-3.5-turbo'}",
+    model="${defaultModel}",
     messages=[
         {"role": "user", "content": "Hello, how are you?"}
     ]
@@ -87,7 +165,7 @@ const client = new OpenAI({
 
 async function main() {
   const completion = await client.chat.completions.create({
-    model: '${apiKey.models[0] || 'gpt-3.5-turbo'}',
+    model: '${defaultModel}',
     messages: [
       { role: 'user', content: 'Hello, how are you?' }
     ]
@@ -116,7 +194,7 @@ main();`;
           <div className="bg-gradient-to-r from-primary to-primary-700 px-6 py-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-2xl font-bold text-white">{apiKey.name}</h3>
+                <h3 className="text-2xl font-bold text-white">{keyName}</h3>
                 <p className="text-primary-50 text-sm mt-1">API Key Details</p>
               </div>
               <button
@@ -131,60 +209,6 @@ main();`;
           </div>
 
           <div className="bg-white px-6 py-6 max-h-[70vh] overflow-y-auto">
-            {/* API Key Section */}
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-gray-900 flex items-center">
-                  <svg className="h-5 w-5 mr-2 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                  </svg>
-                  API Key
-                </h4>
-                <button
-                  onClick={() => setShowRegenerateConfirm(true)}
-                  className="px-3 py-1 text-xs bg-orange-600 text-white rounded hover:bg-orange-700 transition-colors flex items-center gap-1"
-                >
-                  <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  Regenerate Key
-                </button>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <code className="text-sm font-mono text-gray-900 break-all">{displayKey}</code>
-                  <div className="flex gap-2 ml-4">
-                    <button
-                      onClick={() => setShowFullKey(!showFullKey)}
-                      className="px-3 py-1 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors"
-                    >
-                      {showFullKey ? 'Hide' : 'Show'}
-                    </button>
-                    <button
-                      onClick={() => copyToClipboard(apiKey.key)}
-                      className="px-3 py-1 text-xs bg-primary text-white rounded hover:bg-primary-600 transition-colors flex items-center gap-1"
-                    >
-                      {copied ? (
-                        <>
-                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                          Copied!
-                        </>
-                      ) : (
-                        <>
-                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                          Copy
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             {/* Key Info */}
             <div className="mb-6">
               <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
@@ -208,11 +232,11 @@ main();`;
                 </div>
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Total Spend</p>
-                  <p className="text-sm text-gray-900 font-medium">${typeof apiKey.usage_count === 'number' ? apiKey.usage_count.toFixed(4) : '0.0000'}</p>
+                  <p className="text-sm text-gray-900 font-medium">${calculatedSpend.toFixed(4)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Models</p>
-                  <p className="text-sm text-gray-900 font-medium">{apiKey.models.length} model(s)</p>
+                  <p className="text-sm text-gray-900 font-medium">{models.length} model(s)</p>
                 </div>
               </div>
             </div>
@@ -226,16 +250,20 @@ main();`;
                 Allowed Models
               </h4>
               <div className="bg-gray-50 rounded-lg p-4">
-                <div className="flex flex-wrap gap-2">
-                  {apiKey.models.map((model) => (
-                    <span
-                      key={model}
-                      className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-100 text-primary-800"
-                    >
-                      {model}
-                    </span>
-                  ))}
-                </div>
+                {models.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {models.map((model) => (
+                      <span
+                        key={model}
+                        className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-100 text-primary-800"
+                      >
+                        {model}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No models assigned. This key has access to all models.</p>
+                )}
               </div>
             </div>
 
@@ -253,14 +281,14 @@ main();`;
                 <div className="flex items-center justify-between mb-2">
                   <h5 className="text-sm font-semibold text-gray-700">cURL</h5>
                   <button
-                    onClick={() => copyToClipboard(curlExample)}
+                    onClick={() => copyToClipboard(curlExample, 'curl')}
                     className="text-xs text-primary hover:text-primary-700"
                   >
-                    Copy
+                    {copiedExample === 'curl' ? 'Copied!' : 'Copy'}
                   </button>
                 </div>
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-xs overflow-x-auto">
-                  <code>{curlExample}</code>
+                <pre className="bg-charcoal-900 text-charcoal-100 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all" style={{ WebkitTextFillColor: 'inherit' }}>
+                  <code className="text-charcoal-100" style={{ background: 'none', WebkitTextFillColor: 'inherit' }}>{curlExample}</code>
                 </pre>
               </div>
 
@@ -269,14 +297,14 @@ main();`;
                 <div className="flex items-center justify-between mb-2">
                   <h5 className="text-sm font-semibold text-gray-700">Python</h5>
                   <button
-                    onClick={() => copyToClipboard(pythonExample)}
+                    onClick={() => copyToClipboard(pythonExample, 'python')}
                     className="text-xs text-primary hover:text-primary-700"
                   >
-                    Copy
+                    {copiedExample === 'python' ? 'Copied!' : 'Copy'}
                   </button>
                 </div>
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-xs overflow-x-auto">
-                  <code>{pythonExample}</code>
+                <pre className="bg-charcoal-900 text-charcoal-100 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all" style={{ WebkitTextFillColor: 'inherit' }}>
+                  <code className="text-charcoal-100" style={{ background: 'none', WebkitTextFillColor: 'inherit' }}>{pythonExample}</code>
                 </pre>
               </div>
 
@@ -285,27 +313,37 @@ main();`;
                 <div className="flex items-center justify-between mb-2">
                   <h5 className="text-sm font-semibold text-gray-700">Node.js</h5>
                   <button
-                    onClick={() => copyToClipboard(nodeExample)}
+                    onClick={() => copyToClipboard(nodeExample, 'node')}
                     className="text-xs text-primary hover:text-primary-700"
                   >
-                    Copy
+                    {copiedExample === 'node' ? 'Copied!' : 'Copy'}
                   </button>
                 </div>
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-xs overflow-x-auto">
-                  <code>{nodeExample}</code>
+                <pre className="bg-charcoal-900 text-charcoal-100 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all" style={{ WebkitTextFillColor: 'inherit' }}>
+                  <code className="text-charcoal-100" style={{ background: 'none', WebkitTextFillColor: 'inherit' }}>{nodeExample}</code>
                 </pre>
               </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="bg-gray-50 px-6 py-3 sm:flex sm:flex-row-reverse">
+          <div className="bg-gray-50 px-6 py-3 sm:flex sm:flex-row-reverse gap-3">
             <button
               type="button"
               onClick={onClose}
               className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-primary text-base font-medium text-white hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary sm:w-auto sm:text-sm"
             >
               Close
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowRegenerateConfirm(true)}
+              className="mt-3 w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-orange-600 text-base font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 sm:mt-0 sm:w-auto sm:text-sm"
+            >
+              <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Regenerate Key
             </button>
           </div>
         </div>

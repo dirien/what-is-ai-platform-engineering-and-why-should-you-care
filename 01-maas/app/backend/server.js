@@ -224,25 +224,46 @@ app.get('/api/keys/:token', async (req, res) => {
 
     console.log('LiteLLM key info response:', JSON.stringify(keyData, null, 2));
 
-    // Try multiple fields for the key name
-    const keyName = keyData.key_alias ||
-                    keyData.key_name ||
-                    keyData.metadata?.name ||
-                    keyData.metadata?.key_alias ||
+    // LiteLLM returns { key: "token_hash", info: { ...actual data... } }
+    // The actual key info is nested inside the "info" field
+    const info = keyData.info || keyData;
+
+    // Try multiple fields for the key name (from info object)
+    const keyName = info.key_alias ||
+                    info.key_name ||
+                    info.metadata?.name ||
+                    info.metadata?.key_alias ||
                     'Unnamed Key';
 
-    // Use token for API operations, key for display if available
-    const keyToken = keyData.token || req.params.token;
+    // Use the token hash for API operations
+    const keyToken = keyData.key || req.params.token;
+
+    // Get last used from spend logs for this key
+    let lastUsed = null;
+    try {
+      const logsResponse = await axios.get(`${LITELLM_API_BASE}/spend/logs`, {
+        headers,
+        params: { api_key: keyToken, summarize: false }
+      });
+      const logs = Array.isArray(logsResponse.data) ? logsResponse.data : [];
+      if (logs.length > 0) {
+        // Find the most recent log entry
+        const sortedLogs = logs.sort((a, b) => new Date(b.startTime || b.endTime) - new Date(a.startTime || a.endTime));
+        lastUsed = sortedLogs[0].startTime || sortedLogs[0].endTime;
+      }
+    } catch (e) {
+      console.log('Could not fetch logs for last_used:', e.message);
+    }
 
     // Transform to our format
     const transformedKey = {
       id: keyToken, // Token hash for API operations
       name: keyName,
-      key: keyData.key || keyToken, // Full key value for detail view (or token if key not available)
-      models: keyData.models || [],
-      created_at: keyData.created_at || new Date().toISOString(),
-      last_used: keyData.last_used_at,
-      usage_count: keyData.spend || 0
+      key: keyToken, // Token hash (actual sk-... key is not returned by /key/info)
+      models: info.models || [],
+      created_at: info.created_at || new Date().toISOString(),
+      last_used: lastUsed || info.last_used_at,
+      usage_count: info.spend || 0
     };
 
     res.json(transformedKey);

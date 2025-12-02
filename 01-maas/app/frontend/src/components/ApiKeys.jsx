@@ -28,8 +28,76 @@ const ApiKeys = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get('/api/keys');
-      setApiKeys(response.data.data || []);
+      // Fetch keys, spend logs, and model info in parallel
+      const [keysResponse, logsResponse, modelInfoResponse] = await Promise.all([
+        axios.get('/api/keys'),
+        axios.get('/api/spend/logs').catch(() => ({ data: [] })),
+        axios.get('/api/model-info').catch(() => ({ data: { data: [] } }))
+      ]);
+
+      const keys = keysResponse.data.data || [];
+      const logs = logsResponse.data || [];
+      const modelInfoData = modelInfoResponse.data?.data || [];
+
+      // Build pricing map from model info
+      const pricingMap = new Map();
+      modelInfoData.forEach(m => {
+        const modelName = m.model_name || m.model_info?.id;
+        if (modelName) {
+          pricingMap.set(modelName, {
+            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
+            outputCostPerToken: m.model_info?.output_cost_per_token || 0
+          });
+        }
+      });
+
+      // Helper function to calculate spend from log
+      const calculateSpend = (log) => {
+        if (typeof log.spend === 'number' && log.spend > 0) {
+          return log.spend;
+        }
+        const modelName = log.model_group || log.model || log.model_id;
+        const pricing = pricingMap.get(modelName);
+        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
+          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
+          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
+          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
+        }
+        return 0;
+      };
+
+      // Calculate spend per key from logs
+      const keySpendMap = new Map();
+      logs.forEach(log => {
+        const keyId = log.api_key;
+        if (keyId) {
+          const currentSpend = keySpendMap.get(keyId) || 0;
+          keySpendMap.set(keyId, currentSpend + calculateSpend(log));
+        }
+      });
+
+      // Update keys with calculated spend
+      const keysWithSpend = keys.map(key => {
+        // Try to match key by exact id or partial match
+        let totalSpend = keySpendMap.get(key.id) || 0;
+
+        // If no exact match, try partial match (LiteLLM sometimes stores partial key hashes)
+        if (totalSpend === 0 && key.id) {
+          for (const [logKeyId, spend] of keySpendMap.entries()) {
+            if (logKeyId && key.id && (logKeyId.includes(key.id.substring(0, 16)) || key.id.includes(logKeyId.substring(0, 16)))) {
+              totalSpend = spend;
+              break;
+            }
+          }
+        }
+
+        return {
+          ...key,
+          usage_count: totalSpend
+        };
+      });
+
+      setApiKeys(keysWithSpend);
     } catch (err) {
       console.error('Error fetching API keys:', err);
       setError(err.response?.data?.error || err.message || 'Failed to fetch API keys');
