@@ -129,7 +129,8 @@ maas-app/
     │   ├── components/
     │   │   ├── Sidebar.jsx           # Navigation sidebar
     │   │   ├── Models.jsx            # Models list page
-    │   │   ├── ModelCard.jsx         # Individual model card
+    │   │   ├── ModelCard.jsx         # Individual model card with cost/capability info
+    │   │   ├── ModelDetailModal.jsx  # Model detail view with usage example
     │   │   ├── Notebooks.jsx         # JupyterHub notebooks page
     │   │   ├── ApiKeys.jsx           # API key management
     │   │   ├── ApiKeyUsageModal.jsx  # Per-key usage details modal
