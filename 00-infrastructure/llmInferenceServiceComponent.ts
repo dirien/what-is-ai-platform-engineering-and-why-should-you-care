@@ -350,6 +350,12 @@ export interface LLMInferenceServiceArgs {
         timeoutSeconds?: number;
         failureThreshold?: number;
     };
+
+    /**
+     * ServiceAccount name for the pod
+     * Use this to provide access to secrets (e.g., HuggingFace token for gated models)
+     */
+    serviceAccountName?: pulumi.Input<string>;
 }
 
 /**
@@ -404,7 +410,7 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
 
         // Build inline template overrides if any are provided
         const hasInlineOverrides = args.resources || args.tolerations || args.env ||
-                                   args.image || args.args || args.livenessProbe;
+                                   args.image || args.args || args.livenessProbe || args.serviceAccountName;
 
         if (hasInlineOverrides) {
             // Default resource configuration
@@ -484,6 +490,12 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
             // Add tolerations if specified
             if (tolerations.length > 0) {
                 templateSpec.tolerations = tolerations;
+            }
+
+            // Add serviceAccountName if specified
+            // This allows the pod to access secrets referenced by the ServiceAccount
+            if (args.serviceAccountName) {
+                templateSpec.serviceAccountName = args.serviceAccountName;
             }
 
             spec.template = templateSpec;
