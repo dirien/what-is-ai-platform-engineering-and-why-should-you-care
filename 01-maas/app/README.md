@@ -6,7 +6,9 @@ A full-stack application for managing LLM models and Jupyter notebooks, providin
 
 - Model Discovery: Search and browse LLM models available through LiteLLM API
 - Notebook Management: View, start, and stop JupyterHub notebooks
-- Modern UI with Tailwind CSS and "Warm Sophistication" design theme
+- API Key Management: Create, view, and manage LiteLLM API keys with per-key usage tracking
+- FinOps Dashboard: Track usage and costs across models with charts for spend visualization
+- Modern UI with Tailwind CSS and elegant light theme
 - Responsive tile-based layout
 - Fast and efficient API integration
 
@@ -96,8 +98,17 @@ The backend exposes the following endpoints:
 ### Models
 - `GET /api/health` - Health check endpoint
 - `GET /api/models` - Get all available models
-- `GET /api/model-info` - Get detailed model information
+- `GET /api/model-info` - Get detailed model information with pricing
 - `GET /api/model-group-info` - Get model group information
+- `GET /api/public-model-hub` - Get published models only
+
+### API Keys
+- `GET /api/keys` - List all API keys
+- `POST /api/keys` - Create a new API key
+- `DELETE /api/keys/:key` - Delete an API key
+
+### FinOps / Spend Tracking
+- `GET /api/spend/logs` - Get spend logs with token usage (uses master key internally)
 
 ### Notebooks (JupyterHub)
 - `GET /api/notebooks` - List all running notebooks
@@ -116,10 +127,13 @@ maas-app/
 └── frontend/
     ├── src/
     │   ├── components/
-    │   │   ├── Sidebar.jsx      # Navigation sidebar
-    │   │   ├── Models.jsx       # Models list page
-    │   │   ├── ModelCard.jsx    # Individual model card
-    │   │   └── Notebooks.jsx    # JupyterHub notebooks page
+    │   │   ├── Sidebar.jsx           # Navigation sidebar
+    │   │   ├── Models.jsx            # Models list page
+    │   │   ├── ModelCard.jsx         # Individual model card
+    │   │   ├── Notebooks.jsx         # JupyterHub notebooks page
+    │   │   ├── ApiKeys.jsx           # API key management
+    │   │   ├── ApiKeyUsageModal.jsx  # Per-key usage details modal
+    │   │   └── FinOpsDashboard.jsx   # Usage and cost tracking dashboard
     │   ├── App.jsx              # Main app component
     │   ├── main.jsx             # Entry point
     │   └── index.css            # Global styles

@@ -4,6 +4,7 @@ import Models from './components/Models';
 import ApiKeys from './components/ApiKeys';
 import Subscriptions from './components/Subscriptions';
 import Notebooks from './components/Notebooks';
+import FinOpsDashboard from './components/FinOpsDashboard';
 import './index.css';
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
       <main className="flex-1 overflow-auto gradient-subtle">
         {activeTab === 'models' && <Models />}
         {activeTab === 'notebooks' && <Notebooks />}
+        {activeTab === 'finops' && <FinOpsDashboard />}
         {activeTab === 'api-keys' && <ApiKeys />}
         {activeTab === 'subscriptions' && <Subscriptions />}
       </main>
