@@ -19,8 +19,35 @@ const Models = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get('/api/public-model-hub');
-      const publicModels = response.data || [];
+      // Fetch both public model hub and detailed model info
+      const [publicResponse, detailedResponse] = await Promise.all([
+        axios.get('/api/public-model-hub'),
+        axios.get('/api/model-info')
+      ]);
+
+      const publicModels = publicResponse.data || [];
+      const detailedModels = detailedResponse.data?.data || [];
+
+      // Create a map of detailed model info by model_name for merging
+      const detailedInfoMap = {};
+      detailedModels.forEach(model => {
+        if (model.model_name) {
+          detailedInfoMap[model.model_name] = {
+            input_cost_per_token: model.model_info?.input_cost_per_token,
+            output_cost_per_token: model.model_info?.output_cost_per_token,
+            max_tokens: model.model_info?.max_tokens,
+            max_input_tokens: model.model_info?.max_input_tokens,
+            max_output_tokens: model.model_info?.max_output_tokens,
+            description: model.model_info?.description,
+            litellm_provider: model.model_info?.litellm_provider,
+            mode: model.model_info?.mode,
+            supports_function_calling: model.model_info?.supports_function_calling,
+            supports_vision: model.model_info?.supports_vision,
+            supports_tool_choice: model.model_info?.supports_tool_choice,
+            supported_openai_params: model.model_info?.supported_openai_params,
+          };
+        }
+      });
 
       const modelsList = publicModels.map(modelGroup => ({
         id: modelGroup.model_group,
@@ -32,9 +59,22 @@ const Models = () => {
       const infoMap = {};
       publicModels.forEach(modelGroup => {
         if (modelGroup.model_group) {
+          // Merge public model hub data with detailed model info
+          const detailedInfo = detailedInfoMap[modelGroup.model_group] || {};
           infoMap[modelGroup.model_group] = {
             model_name: modelGroup.model_group,
-            ...modelGroup
+            ...modelGroup,
+            // Override with detailed info if available (costs, tokens, etc.)
+            input_cost_per_token: detailedInfo.input_cost_per_token ?? modelGroup.input_cost_per_token,
+            output_cost_per_token: detailedInfo.output_cost_per_token ?? modelGroup.output_cost_per_token,
+            max_tokens: detailedInfo.max_tokens ?? modelGroup.max_tokens,
+            max_input_tokens: detailedInfo.max_input_tokens ?? modelGroup.max_input_tokens,
+            max_output_tokens: detailedInfo.max_output_tokens ?? modelGroup.max_output_tokens,
+            description: detailedInfo.description,
+            mode: detailedInfo.mode || modelGroup.mode,
+            supports_function_calling: detailedInfo.supports_function_calling ?? modelGroup.supports_function_calling,
+            supports_vision: detailedInfo.supports_vision ?? modelGroup.supports_vision,
+            supported_openai_params: detailedInfo.supported_openai_params || modelGroup.supported_openai_params,
           };
         }
       });
