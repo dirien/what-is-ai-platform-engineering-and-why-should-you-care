@@ -265,18 +265,8 @@ print(response.choices[0].message.content)`;
                       )}
                     </button>
                   </div>
-                  <pre className="p-4 text-sm text-charcoal-100 overflow-x-auto font-mono leading-relaxed">
-                    <code>{pythonUsageExample.split('\n').map((line, i) => {
-                      // Simple syntax highlighting
-                      const highlightedLine = line
-                        .replace(/\b(import|from|print)\b/g, '<span class="text-violet-400">$1</span>')
-                        .replace(/\b(openai|client|response)\b/g, '<span class="text-sky-400">$1</span>')
-                        .replace(/"([^"]+)"/g, '<span class="text-sage-400">"$1"</span>')
-                        .replace(/#.+$/g, '<span class="text-charcoal-500">$&</span>');
-                      return (
-                        <span key={i} dangerouslySetInnerHTML={{ __html: highlightedLine + '\n' }} />
-                      );
-                    })}</code>
+                  <pre className="p-4 text-sm text-green-400 overflow-x-auto font-mono leading-relaxed whitespace-pre">
+                    <code>{pythonUsageExample}</code>
                   </pre>
                 </div>
               </div>
