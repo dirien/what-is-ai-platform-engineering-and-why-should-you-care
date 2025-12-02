@@ -1,17 +1,20 @@
-# LiteLLM Model Discovery App (01-maas)
+# MaaS Platform (01-maas)
 
-This folder contains the Model-as-a-Service application for the AI Platform Engineering demo.
+This folder contains the Model-as-a-Service (MaaS) platform for the AI Platform Engineering demo. It bundles LiteLLM API gateway, a custom frontend application, and JupyterHub notebook support.
 
 ## Structure
 
-- `app/` - Full-stack LiteLLM Model Discovery application
+- `app/` - Full-stack MaaS application
   - `frontend/` - React + Vite frontend with Tailwind CSS (port 3000)
     - "Warm Sophistication" design theme with coral/terracotta primary colors
     - Cream backgrounds, sage accents, Inter + Plus Jakarta Sans typography
     - Component styles: cards, badges, buttons, tables defined in index.css
+    - **Notebooks page** for JupyterHub integration
   - `backend/` - Express.js API server (port 3001)
+    - JupyterHub API integration for notebook management
   - `Dockerfile` - Multi-stage Docker build
-- `infra/` - Pulumi infrastructure for ECR, Docker build, and LiteLLM deployment
+- `infra/` - Pulumi infrastructure for ECR, Docker build, MaaS and JupyterHub deployment
+- `notebook-image/` - Custom JupyterHub notebook Docker image (optional)
 
 ## Quick Start
 
@@ -29,10 +32,6 @@ npm run dev  # Starts both frontend and backend
 cd infra
 npm install
 pulumi stack select dev
-
-# Set required secrets
-pulumi config set --secret litellmMasterKey "sk-your-master-key"
-
 pulumi up
 ```
 
@@ -47,11 +46,20 @@ The `infra/` folder uses Pulumi TypeScript with:
   - Server-side encryption (AES256)
   - Lifecycle policy for image cleanup
 
-- **LiteLLMComponent** - Deploys LiteLLM API gateway via Helm chart:
-  - Unified OpenAI-compatible API for multiple model backends
-  - Connects to KServe inference services from 00-infrastructure
-  - PostgreSQL database for API key management
-  - Configurable model routing
+- **MaaSComponent** - Bundles LiteLLM and the MaaS frontend app:
+  - Deploys to dedicated `maas` namespace
+  - LiteLLM API gateway via Helm chart
+  - MaaS frontend app Deployment and Service
+  - Internet-facing AWS NLB via Load Balancer Controller
+  - JupyterHub API token secret management
+
+- **JupyterHubComponent** - Deploys JupyterHub for notebook support:
+  - Deploys to dedicated `jupyterhub` namespace
+  - Multiple notebook profiles (CPU Standard, CPU Large, GPU ML/AI)
+  - LiteLLM integration for OpenAI SDK access in notebooks
+  - Persistent storage for user data
+  - Idle notebook culling
+  - Internet-facing AWS NLB via Load Balancer Controller
 
 - **Docker Build** - Uses `@pulumi/docker-build` with:
   - BuildKit for improved performance
@@ -78,8 +86,13 @@ After `pulumi up`, you'll get:
 - `ecrRepositoryUrl` - ECR repository URL for pulling images
 - `imageRef` - Full image reference with tag
 - `imageDigest` - Image digest for immutable deployments
-- `litellmServiceName` - LiteLLM Kubernetes service name
-- `litellmInternalUrl` - Internal cluster URL for LiteLLM API
+- `maasNamespace` - MaaS Kubernetes namespace
+- `litellmReleaseName` - LiteLLM Helm release name
+- `litellmServiceUrl` - Internal cluster URL for LiteLLM API
+- `maasServiceUrl` - Internal cluster URL for MaaS app
+- `maasPublicUrl` - Public NLB URL for MaaS app
+- `jupyterhubNamespace` - JupyterHub Kubernetes namespace
+- `jupyterhubPublicUrl` - Public NLB URL for JupyterHub
 - `ecrLoginCommand` - AWS CLI command for Docker login
 - `dockerPullCommand` - Command to pull the image
 
@@ -87,8 +100,7 @@ After `pulumi up`, you'll get:
 
 | Config Key | Description | Required |
 |------------|-------------|----------|
-| `appName` | Application name prefix | No (default: litellm-app) |
-| `litellmMasterKey` | Master API key for LiteLLM | Yes (secret) |
+| `appName` | Application name prefix | No (default: maas) |
 
 ## Skills
 

@@ -171,6 +171,43 @@ export class KServeComponent extends pulumi.ComponentResource {
                 crds: {
                     enabled: true,
                 },
+                // Resource limits for cert-manager controller
+                resources: {
+                    requests: {
+                        cpu: "50m",
+                        memory: "64Mi",
+                    },
+                    limits: {
+                        cpu: "200m",
+                        memory: "256Mi",
+                    },
+                },
+                // Resource limits for cainjector
+                cainjector: {
+                    resources: {
+                        requests: {
+                            cpu: "50m",
+                            memory: "64Mi",
+                        },
+                        limits: {
+                            cpu: "200m",
+                            memory: "256Mi",
+                        },
+                    },
+                },
+                // Resource limits for webhook
+                webhook: {
+                    resources: {
+                        requests: {
+                            cpu: "50m",
+                            memory: "64Mi",
+                        },
+                        limits: {
+                            cpu: "200m",
+                            memory: "256Mi",
+                        },
+                    },
+                },
             },
             // Wait for deployment to complete
             waitForJobs: true,

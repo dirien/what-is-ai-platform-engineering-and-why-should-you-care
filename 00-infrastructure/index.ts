@@ -45,7 +45,7 @@ const cluster = new eks.Cluster("eks-auto-mode", {
     },
     corednsAddonOptions: {
         enabled: false, // Disable CoreDNS addon to avoid a conflict with the default CoreDNS installed by EKS Auto Mode.
-    }
+    },
 });
 
 export const kubeconfig = pulumi.secret(cluster.kubeconfigJson)

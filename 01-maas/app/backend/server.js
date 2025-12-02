@@ -14,6 +14,9 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const LITELLM_API_BASE = process.env.LITELLM_API_BASE || 'https://litellm-api.up.railway.app';
 const LITELLM_MASTER_KEY = process.env.LITELLM_MASTER_KEY || 'sk-litellm-master-key';
+const JUPYTERHUB_API_URL = process.env.JUPYTERHUB_API_URL || 'http://proxy-public.jupyterhub.svc.cluster.local';
+const JUPYTERHUB_PUBLIC_URL = process.env.JUPYTERHUB_PUBLIC_URL || JUPYTERHUB_API_URL; // Public URL for browser redirects
+const JUPYTERHUB_API_TOKEN = process.env.JUPYTERHUB_API_TOKEN || '';
 
 app.use(cors());
 app.use(express.json());
@@ -377,6 +380,208 @@ app.get('/api/spend/logs', async (req, res) => {
     console.error('Error fetching spend logs:', error.response?.data || error.message);
     res.status(error.response?.status || 500).json({
       error: error.response?.data?.error || error.message || 'Failed to fetch spend logs'
+    });
+  }
+});
+
+// ============================================================================
+// JupyterHub Notebook Management Endpoints
+// ============================================================================
+
+// Helper function for JupyterHub API calls
+const jupyterhubHeaders = () => ({
+  'Authorization': `token ${JUPYTERHUB_API_TOKEN}`,
+  'Content-Type': 'application/json'
+});
+
+// Get all notebooks (user servers)
+app.get('/api/notebooks', async (req, res) => {
+  try {
+    // If no JupyterHub token configured, return empty list
+    if (!JUPYTERHUB_API_TOKEN) {
+      return res.json({
+        notebooks: [],
+        jupyterhubUrl: JUPYTERHUB_API_URL,
+        message: 'JupyterHub not configured'
+      });
+    }
+
+    const response = await axios.get(`${JUPYTERHUB_API_URL}/hub/api/users`, {
+      headers: jupyterhubHeaders()
+    });
+
+    // Extract notebook servers from all users
+    const notebooks = [];
+    for (const user of response.data) {
+      // Default server
+      if (user.server) {
+        notebooks.push({
+          name: user.name,
+          user: user.name,
+          url: user.server,
+          started: user.last_activity,
+          ready: true,
+          pending: null
+        });
+      }
+      // Named servers (skip empty-string key as it's the same as user.server)
+      if (user.servers) {
+        for (const [serverName, server] of Object.entries(user.servers)) {
+          // Skip the default server (empty string) - already added above via user.server
+          if (serverName === '') continue;
+          notebooks.push({
+            name: serverName || user.name,
+            user: user.name,
+            url: server.url,
+            started: server.started,
+            ready: server.ready,
+            pending: server.pending
+          });
+        }
+      }
+    }
+
+    res.json({
+      notebooks,
+      jupyterhubUrl: JUPYTERHUB_PUBLIC_URL // Use public URL for browser access
+    });
+  } catch (error) {
+    console.error('Error fetching notebooks from JupyterHub:', error.response?.data || error.message);
+    // Return 503 if JupyterHub is not available
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      return res.status(503).json({
+        error: 'JupyterHub service is not available',
+        notebooks: [],
+        jupyterhubUrl: JUPYTERHUB_PUBLIC_URL
+      });
+    }
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.message || error.message || 'Failed to fetch notebooks',
+      notebooks: []
+    });
+  }
+});
+
+// Create/Start a notebook server
+app.post('/api/notebooks', async (req, res) => {
+  try {
+    const { profile, username } = req.body;
+    const user = username || 'default';
+
+    if (!JUPYTERHUB_API_TOKEN) {
+      return res.status(503).json({
+        error: 'JupyterHub not configured'
+      });
+    }
+
+    // Profile IDs match JupyterHub profile slugs directly
+    // (kubespawner converts display_name "CPU - Standard" to slug "cpu-standard")
+    const validProfiles = ['cpu-standard', 'cpu-large', 'gpu-ml-ai'];
+
+    // First, ensure the user exists (create if not)
+    try {
+      await axios.post(`${JUPYTERHUB_API_URL}/hub/api/users/${user}`, {}, {
+        headers: jupyterhubHeaders()
+      });
+    } catch (err) {
+      // User might already exist, that's okay
+      if (err.response?.status !== 409) {
+        console.log('User creation note:', err.response?.status);
+      }
+    }
+
+    // Start the server for the user with the selected profile
+    const serverOptions = {};
+    if (profile && validProfiles.includes(profile)) {
+      serverOptions.profile = profile;  // Pass slug directly to JupyterHub
+    }
+
+    const response = await axios.post(
+      `${JUPYTERHUB_API_URL}/hub/api/users/${user}/server`,
+      serverOptions,
+      { headers: jupyterhubHeaders() }
+    );
+
+    // Return the URL to access the notebook (use public URL for browser)
+    res.status(201).json({
+      message: 'Notebook server started',
+      user: user,
+      url: `${JUPYTERHUB_PUBLIC_URL}/user/${user}/lab`,
+      status: response.status === 201 ? 'starting' : 'started'
+    });
+  } catch (error) {
+    console.error('Error creating notebook:', error.response?.data || error.message);
+
+    // Handle "already running" case
+    if (error.response?.status === 400) {
+      const user = req.body.username || 'default';
+      return res.json({
+        message: 'Notebook server already running',
+        user: user,
+        url: `${JUPYTERHUB_PUBLIC_URL}/user/${user}/lab`,
+        status: 'running'
+      });
+    }
+
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.message || error.message || 'Failed to create notebook'
+    });
+  }
+});
+
+// Stop a notebook server
+app.delete('/api/notebooks/:serverName', async (req, res) => {
+  try {
+    const { serverName } = req.params;
+
+    if (!JUPYTERHUB_API_TOKEN) {
+      return res.status(503).json({
+        error: 'JupyterHub not configured'
+      });
+    }
+
+    // Stop the user's server
+    await axios.delete(
+      `${JUPYTERHUB_API_URL}/hub/api/users/${serverName}/server`,
+      { headers: jupyterhubHeaders() }
+    );
+
+    res.json({
+      message: 'Notebook server stopped',
+      serverName: serverName
+    });
+  } catch (error) {
+    console.error('Error stopping notebook:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.message || error.message || 'Failed to stop notebook'
+    });
+  }
+});
+
+// Get JupyterHub status
+app.get('/api/notebooks/status', async (req, res) => {
+  try {
+    if (!JUPYTERHUB_API_TOKEN) {
+      return res.json({
+        available: false,
+        message: 'JupyterHub not configured'
+      });
+    }
+
+    const response = await axios.get(`${JUPYTERHUB_API_URL}/hub/api/`, {
+      headers: jupyterhubHeaders(),
+      timeout: 5000
+    });
+
+    res.json({
+      available: true,
+      version: response.data.version,
+      url: JUPYTERHUB_PUBLIC_URL
+    });
+  } catch (error) {
+    res.json({
+      available: false,
+      error: error.message
     });
   }
 });
