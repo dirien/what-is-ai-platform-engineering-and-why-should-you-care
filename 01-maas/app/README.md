@@ -1,14 +1,14 @@
-# LiteLLM Model Discovery App
+# MaaS (Model-as-a-Service) App
 
-A full-stack application for discovering and browsing LLM models available through the LiteLLM API.
+A full-stack application for managing LLM models and Jupyter notebooks, providing a unified interface for AI platform services.
 
 ## Features
 
-- 🎨 Modern UI with Tailwind CSS
-- 🔍 Search and filter models
-- 📊 Detailed model information display
-- 🎯 Responsive tile-based layout
-- ⚡ Fast and efficient API integration
+- Model Discovery: Search and browse LLM models available through LiteLLM API
+- Notebook Management: View, start, and stop JupyterHub notebooks
+- Modern UI with Tailwind CSS and "Warm Sophistication" design theme
+- Responsive tile-based layout
+- Fast and efficient API integration
 
 ## Tech Stack
 
@@ -93,17 +93,23 @@ The frontend will run on `http://localhost:3000`
 
 The backend exposes the following endpoints:
 
+### Models
 - `GET /api/health` - Health check endpoint
 - `GET /api/models` - Get all available models
 - `GET /api/model-info` - Get detailed model information
 - `GET /api/model-group-info` - Get model group information
 
+### Notebooks (JupyterHub)
+- `GET /api/notebooks` - List all running notebooks
+- `POST /api/notebooks/start` - Start a new notebook for a user
+- `DELETE /api/notebooks/:username` - Stop a user's notebook
+
 ## Project Structure
 
 ```
-litellm-app/
+maas-app/
 ├── backend/
-│   ├── server.js          # Express server
+│   ├── server.js          # Express server with LiteLLM and JupyterHub APIs
 │   ├── package.json       # Backend dependencies
 │   └── .env              # Environment variables
 │
@@ -112,7 +118,8 @@ litellm-app/
     │   ├── components/
     │   │   ├── Sidebar.jsx      # Navigation sidebar
     │   │   ├── Models.jsx       # Models list page
-    │   │   └── ModelCard.jsx    # Individual model card
+    │   │   ├── ModelCard.jsx    # Individual model card
+    │   │   └── Notebooks.jsx    # JupyterHub notebooks page
     │   ├── App.jsx              # Main app component
     │   ├── main.jsx             # Entry point
     │   └── index.css            # Global styles

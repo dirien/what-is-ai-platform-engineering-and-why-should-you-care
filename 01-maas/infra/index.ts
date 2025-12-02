@@ -3,10 +3,12 @@ import * as aws from "@pulumi/aws";
 import * as k8s from "@pulumi/kubernetes";
 import * as dockerBuild from "@pulumi/docker-build";
 import { EcrRepositoryComponent } from "./ecrComponent";
+import { JupyterHubComponent } from "./jupyterhubComponent";
+import { MaaSComponent } from "./maasComponent";
 
 // Configuration
 const config = new pulumi.Config();
-const appName = config.get("appName") || "litellm-app";
+const appName = config.get("appName") || "maas";
 const environment = pulumi.getStack();
 
 // Tags for all resources
@@ -36,7 +38,7 @@ const k8sProvider = new k8s.Provider("k8s-provider", {
 
 // Create ECR repository using component resource
 const ecr = new EcrRepositoryComponent(`${appName}-ecr`, {
-    repositoryName: `${appName}`,
+    repositoryName: appName,
     scanOnPush: true,
     imageTagMutability: "MUTABLE",
     imageRetentionCount: 10,
@@ -86,129 +88,87 @@ const image = new dockerBuild.Image(`${appName}-image`, {
 });
 
 // =============================================================================
-// LiteLLM Deployment
+// JupyterHub Deployment
 // =============================================================================
 
-// Deploy LiteLLM as the API gateway for model inference
-// LiteLLM provides a unified OpenAI-compatible API for multiple model backends
-// Using latest Helm chart version 0.1.825 from ghcr.io/berriai/litellm-helm
-const litellm = new k8s.helm.v3.Release("litellm", {
-    chart: "oci://ghcr.io/berriai/litellm-helm",
-    version: "0.1.825",
-    namespace: "default",
-    values: {
-        envVars: {
-            UI_USERNAME: "admin",
-            UI_PASSWORD: "admin",
-            STORE_MODEL_IN_DB: "True",
+// Deploy JupyterHub for notebook support (in its own namespace)
+// Provides Jupyter notebooks with LiteLLM integration for data scientists
+const jupyterhub = new JupyterHubComponent("jupyterhub", {
+    namespace: "jupyterhub",
+    chartVersion: "4.3.2-0.dev.git.7211.hba50290a",
+    // LiteLLM URL will be updated after MaaS component is created
+    litellmServiceUrl: "http://maas-litellm.maas.svc.cluster.local:4000",
+    storageSize: "10Gi",
+    idleTimeout: 3600, // 1 hour
+    adminUsers: ["admin"],
+    enableLoadBalancer: true, // Expose JupyterHub via AWS LoadBalancer
+    profiles: [
+        {
+            displayName: "CPU - Standard",
+            description: "Standard CPU notebook for data analysis and development",
+            cpuLimit: "2",
+            memoryLimit: "4Gi",
+            cpuRequest: "500m",
+            memoryRequest: "1Gi",
+            default: true,
         },
-    },
+        {
+            displayName: "CPU - Large",
+            description: "Large CPU notebook for intensive data processing",
+            cpuLimit: "4",
+            memoryLimit: "16Gi",
+            cpuRequest: "1",
+            memoryRequest: "4Gi",
+        },
+        {
+            displayName: "GPU - ML/AI",
+            description: "GPU-enabled notebook for machine learning and AI workloads",
+            cpuLimit: "4",
+            memoryLimit: "32Gi",
+            cpuRequest: "2",
+            memoryRequest: "8Gi",
+            gpuCount: 1,
+        },
+    ],
 }, { provider: k8sProvider });
 
 // =============================================================================
-// Custom App Deployment (LiteLLM Model Discovery UI)
+// MaaS Component (LiteLLM + MaaS App)
 // =============================================================================
 
-const appNamespace = "default";
-const appLabels = { app: appName };
-
-// Deploy the custom LiteLLM Model Discovery app
-// Uses the LiteLLM Helm chart's auto-generated masterkey secret
-const appDeployment = new k8s.apps.v1.Deployment(`${appName}-deployment`, {
-    metadata: {
-        name: appName,
-        namespace: appNamespace,
-        labels: appLabels,
-    },
-    spec: {
-        replicas: 1,
-        selector: {
-            matchLabels: appLabels,
+// Deploy MaaS platform in dedicated namespace
+// Bundles LiteLLM API gateway and MaaS frontend app
+const maas = new MaaSComponent("maas", {
+    namespace: "maas",
+    imageRef: image.ref,
+    litellmChartVersion: "0.1.825",
+    litellmUsername: "admin",
+    litellmPassword: "admin",
+    jupyterhubApiUrl: "http://hub.jupyterhub.svc.cluster.local:8081",
+    jupyterhubPublicUrl: jupyterhub.publicUrl,
+    jupyterhubApiToken: jupyterhub.apiToken,
+    enableLoadBalancer: true,
+    litellmResources: {
+        requests: {
+            cpu: "500m",
+            memory: "1Gi",
         },
-        template: {
-            metadata: {
-                labels: appLabels,
-            },
-            spec: {
-                containers: [{
-                    name: appName,
-                    image: image.ref,
-                    ports: [{
-                        containerPort: 3001,
-                        name: "http",
-                    }],
-                    env: [
-                        {
-                            name: "PORT",
-                            value: "3001",
-                        },
-                        {
-                            // LiteLLM service URL - using Helm release name
-                            // The Helm chart creates a service with the release name
-                            name: "LITELLM_API_BASE",
-                            value: pulumi.interpolate`http://${litellm.name}.${appNamespace}.svc.cluster.local:4000`,
-                        },
-                        {
-                            // Use the LiteLLM Helm chart's auto-generated masterkey
-                            name: "LITELLM_MASTER_KEY",
-                            valueFrom: {
-                                secretKeyRef: {
-                                    name: pulumi.interpolate`${litellm.name}-masterkey`,
-                                    key: "masterkey",
-                                },
-                            },
-                        },
-                    ],
-                    resources: {
-                        requests: {
-                            cpu: "100m",
-                            memory: "128Mi",
-                        },
-                        limits: {
-                            cpu: "500m",
-                            memory: "512Mi",
-                        },
-                    },
-                    livenessProbe: {
-                        httpGet: {
-                            path: "/api/health",
-                            port: "http",
-                        },
-                        initialDelaySeconds: 10,
-                        periodSeconds: 10,
-                    },
-                    readinessProbe: {
-                        httpGet: {
-                            path: "/api/health",
-                            port: "http",
-                        },
-                        initialDelaySeconds: 5,
-                        periodSeconds: 5,
-                    },
-                }],
-            },
+        limits: {
+            cpu: "2000m",
+            memory: "4Gi",
         },
     },
-}, { provider: k8sProvider, dependsOn: [litellm, image] });
-
-// Create ClusterIP service for the app
-const appService = new k8s.core.v1.Service(`${appName}-service`, {
-    metadata: {
-        name: appName,
-        namespace: appNamespace,
-        labels: appLabels,
+    appResources: {
+        requests: {
+            cpu: "100m",
+            memory: "128Mi",
+        },
+        limits: {
+            cpu: "500m",
+            memory: "512Mi",
+        },
     },
-    spec: {
-        type: "ClusterIP",
-        selector: appLabels,
-        ports: [{
-            port: 80,
-            targetPort: 3001,
-            protocol: "TCP",
-            name: "http",
-        }],
-    },
-}, { provider: k8sProvider });
+}, { provider: k8sProvider, dependsOn: [image, jupyterhub] });
 
 // =============================================================================
 // Outputs
@@ -223,13 +183,17 @@ export const ecrRepositoryName = ecr.repository.name;
 export const imageRef = image.ref;
 export const imageDigest = image.digest;
 
-// LiteLLM outputs
-export const litellmReleaseName = litellm.name;
-export const litellmServiceUrl = pulumi.interpolate`http://${litellm.name}.${appNamespace}.svc.cluster.local:4000`;
+// MaaS outputs
+export const maasNamespace = maas.namespace.metadata.name;
+export const litellmReleaseName = maas.litellmReleaseName;
+export const litellmServiceUrl = maas.litellmServiceUrl;
+export const maasServiceUrl = maas.appServiceUrl;
+export const maasPublicUrl = maas.publicUrl;
 
-// Custom app outputs
-export const appServiceName = appService.metadata.name;
-export const appServiceUrl = pulumi.interpolate`http://${appService.metadata.name}.${appNamespace}.svc.cluster.local`;
+// JupyterHub outputs
+export const jupyterhubNamespace = jupyterhub.namespace.metadata.name;
+export const jupyterhubProxyUrl = pulumi.interpolate`http://proxy-public.jupyterhub.svc.cluster.local`;
+export const jupyterhubPublicUrl = jupyterhub.publicUrl;
 
 // Useful commands
 export const ecrLoginCommand = pulumi.interpolate`aws ecr get-login-password --region ${aws.getRegionOutput().name} | docker login --username AWS --password-stdin ${ecr.repositoryUrl}`;
