@@ -133,28 +133,34 @@ app.get('/api/keys', async (req, res) => {
 
     // Transform LiteLLM response to our format
     const keys = response.data.keys || [];
-    const maskedKeys = keys.map(key => {
-      // Try multiple fields for the key name
-      const keyName = key.key_alias ||
-                      key.key_name ||
-                      key.metadata?.name ||
-                      key.metadata?.key_alias ||
-                      (key.key ? key.key.substring(0, 20) : 'Unnamed Key');
+    const maskedKeys = keys
+      // Filter out keys without a valid key value (token)
+      .filter(key => key.key || key.token)
+      .map(key => {
+        // Use key.key or key.token as the identifier
+        const keyValue = key.key || key.token;
 
-      // Use the actual key as the ID (needed for API operations like delete/update/info)
-      // Mask the key for display in the list view
-      const maskedKey = key.key ? `${key.key.substring(0, 12)}...${key.key.substring(key.key.length - 4)}` : 'sk-...****';
+        // Try multiple fields for the key name
+        const keyName = key.key_alias ||
+                        key.key_name ||
+                        key.metadata?.name ||
+                        key.metadata?.key_alias ||
+                        (keyValue ? keyValue.substring(0, 20) : 'Unnamed Key');
 
-      return {
-        id: key.key, // Full key value needed for API operations
-        name: keyName,
-        key: maskedKey, // Masked for display in list
-        models: key.models || [],
-        created_at: key.created_at || new Date().toISOString(),
-        last_used: key.last_used_at,
-        usage_count: key.spend || 0
-      };
-    });
+        // Use the actual key as the ID (needed for API operations like delete/update/info)
+        // Mask the key for display in the list view
+        const maskedKey = keyValue ? `${keyValue.substring(0, 12)}...${keyValue.substring(keyValue.length - 4)}` : 'sk-...****';
+
+        return {
+          id: keyValue, // Full key value needed for API operations
+          name: keyName,
+          key: maskedKey, // Masked for display in list
+          models: key.models || [],
+          created_at: key.created_at || new Date().toISOString(),
+          last_used: key.last_used_at,
+          usage_count: key.spend || 0
+        };
+      });
 
     res.json({ data: maskedKeys });
   } catch (error) {

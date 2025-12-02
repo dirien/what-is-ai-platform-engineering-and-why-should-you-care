@@ -69,6 +69,10 @@ const ApiKeys = () => {
   };
 
   const handleDeleteKey = async (keyId) => {
+    if (!keyId) {
+      alert('Invalid key ID');
+      return;
+    }
     try {
       await axios.delete(`/api/keys/${encodeURIComponent(keyId)}`);
       setApiKeys(apiKeys.filter(k => k.id !== keyId));
@@ -79,6 +83,10 @@ const ApiKeys = () => {
   };
 
   const viewKeyDetails = async (keyId) => {
+    if (!keyId) {
+      alert('Invalid key ID');
+      return;
+    }
     try {
       const response = await axios.get(`/api/keys/${encodeURIComponent(keyId)}`);
       setSelectedKeyForDetail(response.data);
@@ -88,6 +96,10 @@ const ApiKeys = () => {
   };
 
   const editKey = async (keyId) => {
+    if (!keyId) {
+      alert('Invalid key ID');
+      return;
+    }
     try {
       const response = await axios.get(`/api/keys/${encodeURIComponent(keyId)}`);
       setSelectedKeyForEdit(response.data);
