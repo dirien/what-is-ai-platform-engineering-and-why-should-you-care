@@ -111,6 +111,35 @@ app.get('/api/public-model-hub', async (req, res) => {
   }
 });
 
+// Update model pricing in LiteLLM
+app.put('/api/models/:modelId/pricing', async (req, res) => {
+  try {
+    const { inputCostPerToken, outputCostPerToken } = req.body;
+    const modelId = req.params.modelId;
+
+    const headers = {
+      'Authorization': `Bearer ${LITELLM_MASTER_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    // LiteLLM uses /model/update endpoint to update model configuration
+    const response = await axios.post(`${LITELLM_API_BASE}/model/update`, {
+      model_id: modelId,
+      model_info: {
+        input_cost_per_token: inputCostPerToken,
+        output_cost_per_token: outputCostPerToken
+      }
+    }, { headers });
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error updating model pricing:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message || 'Failed to update model pricing'
+    });
+  }
+});
+
 // API Key Management Endpoints - LiteLLM Integration
 
 // Get all API keys from LiteLLM (list all keys)
