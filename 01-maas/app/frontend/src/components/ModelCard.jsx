@@ -3,16 +3,12 @@ import React from 'react';
 const ModelCard = ({ model, info, onClick }) => {
   const modelId = model.id || 'Unknown Model';
   const ownedBy = model.owned_by || 'Unknown';
-  // model.created is already in milliseconds from Date.now()
   const created = model.created ? new Date(model.created).toLocaleDateString() : 'N/A';
-  
-  // Extract additional info if available
+
   const litellmParams = info?.litellm_params || {};
-  const modelInfo = info?.model_info || {};
   const apiBase = litellmParams.api_base;
   const providerModel = litellmParams.model;
 
-  // Determine provider from model name or api_base
   const getProvider = () => {
     if (providerModel) {
       const parts = providerModel.split('/');
@@ -29,46 +25,51 @@ const ModelCard = ({ model, info, onClick }) => {
 
   const provider = getProvider();
 
-  // Get provider color scheme
-  const getProviderColors = (provider) => {
+  // Refined provider accent colors - lighter, more elegant
+  const getProviderAccent = (provider) => {
     const providerLower = provider.toLowerCase();
-    if (providerLower.includes('openai')) return 'from-green-400 to-green-600';
-    if (providerLower.includes('anthropic')) return 'from-orange-400 to-orange-600';
-    if (providerLower.includes('cohere')) return 'from-purple-400 to-purple-600';
-    if (providerLower.includes('google')) return 'from-blue-400 to-blue-600';
-    if (providerLower.includes('hugging')) return 'from-yellow-400 to-yellow-600';
-    return 'from-gray-400 to-gray-600';
+    if (providerLower.includes('openai')) return 'bg-sage-500';
+    if (providerLower.includes('anthropic')) return 'bg-primary-500';
+    if (providerLower.includes('cohere')) return 'bg-violet-500';
+    if (providerLower.includes('google')) return 'bg-sky-500';
+    if (providerLower.includes('hugging')) return 'bg-amber-500';
+    return 'bg-charcoal-400';
   };
 
   return (
     <div
       onClick={onClick}
-      className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-200 cursor-pointer transform hover:scale-105"
+      className="card cursor-pointer overflow-hidden group"
     >
-      <div className={`h-2 bg-gradient-to-r ${getProviderColors(provider)}`}></div>
-      
+      {/* Subtle accent line */}
+      <div className={`h-1 ${getProviderAccent(provider)} opacity-80`}></div>
+
       <div className="p-6">
-        <div className="mb-4">
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <h3 className="text-lg font-semibold text-gray-900 break-words flex-1 min-w-0" title={modelId}>
+        {/* Header */}
+        <div className="mb-5">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <h3 className="text-lg font-semibold text-charcoal-900 break-words flex-1 min-w-0 group-hover:text-primary-600 transition-colors" title={modelId}>
               {modelId}
             </h3>
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 flex-shrink-0 whitespace-nowrap">
+            <span className="badge badge-success flex-shrink-0">
               Active
             </span>
           </div>
-          <p className="text-sm text-gray-500">{provider}</p>
+          <p className="text-sm text-charcoal-500 font-medium">{provider}</p>
         </div>
 
+        {/* Details */}
         <div className="space-y-3">
           {providerModel && (
             <div className="flex items-start">
-              <svg className="h-5 w-5 text-gray-400 mr-2 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <div>
-                <p className="text-xs text-gray-500">Model Path</p>
-                <p className="text-sm text-gray-900 font-mono truncate" title={providerModel}>
+              <div className="w-8 h-8 rounded-lg bg-charcoal-50 flex items-center justify-center mr-3 flex-shrink-0">
+                <svg className="h-4 w-4 text-charcoal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                </svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-charcoal-400 font-medium mb-0.5">Model Path</p>
+                <p className="text-sm text-charcoal-700 font-mono truncate" title={providerModel}>
                   {providerModel}
                 </p>
               </div>
@@ -76,28 +77,42 @@ const ModelCard = ({ model, info, onClick }) => {
           )}
 
           <div className="flex items-start">
-            <svg className="h-5 w-5 text-gray-400 mr-2 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
+            <div className="w-8 h-8 rounded-lg bg-charcoal-50 flex items-center justify-center mr-3 flex-shrink-0">
+              <svg className="h-4 w-4 text-charcoal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+              </svg>
+            </div>
             <div>
-              <p className="text-xs text-gray-500">Created</p>
-              <p className="text-sm text-gray-900">{created}</p>
+              <p className="text-xs text-charcoal-400 font-medium mb-0.5">Created</p>
+              <p className="text-sm text-charcoal-700">{created}</p>
             </div>
           </div>
 
           {apiBase && (
             <div className="flex items-start">
-              <svg className="h-5 w-5 text-gray-400 mr-2 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
+              <div className="w-8 h-8 rounded-lg bg-charcoal-50 flex items-center justify-center mr-3 flex-shrink-0">
+                <svg className="h-4 w-4 text-charcoal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
+                </svg>
+              </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-gray-500">API Base</p>
-                <p className="text-sm text-gray-900 truncate" title={apiBase}>
+                <p className="text-xs text-charcoal-400 font-medium mb-0.5">API Base</p>
+                <p className="text-sm text-charcoal-700 truncate" title={apiBase}>
                   {apiBase}
                 </p>
               </div>
             </div>
           )}
+        </div>
+
+        {/* View Details Link */}
+        <div className="mt-5 pt-4 border-t border-charcoal-100">
+          <span className="text-sm font-medium text-primary-500 group-hover:text-primary-600 flex items-center gap-1.5 transition-colors">
+            View details
+            <svg className="w-4 h-4 transform group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </span>
         </div>
       </div>
     </div>

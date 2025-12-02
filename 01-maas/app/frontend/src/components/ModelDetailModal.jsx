@@ -5,7 +5,6 @@ const ModelDetailModal = ({ model, info, onClose }) => {
 
   const modelId = model.id || 'Unknown Model';
   const ownedBy = model.owned_by || 'Unknown';
-  // model.created is already in milliseconds from Date.now()
   const created = model.created ? new Date(model.created).toLocaleDateString() : 'N/A';
 
   const litellmParams = info?.litellm_params || {};
@@ -13,7 +12,6 @@ const ModelDetailModal = ({ model, info, onClose }) => {
   const apiBase = litellmParams.api_base;
   const providerModel = litellmParams.model;
 
-  // Determine provider from model name or api_base
   const getProvider = () => {
     if (providerModel) {
       const parts = providerModel.split('/');
@@ -30,156 +28,143 @@ const ModelDetailModal = ({ model, info, onClose }) => {
 
   const provider = getProvider();
 
-  // Get provider color scheme
-  const getProviderColors = (provider) => {
+  const getProviderAccent = (provider) => {
     const providerLower = provider.toLowerCase();
-    if (providerLower.includes('openai')) return 'from-green-400 to-green-600';
-    if (providerLower.includes('anthropic')) return 'from-orange-400 to-orange-600';
-    if (providerLower.includes('cohere')) return 'from-purple-400 to-purple-600';
-    if (providerLower.includes('google')) return 'from-blue-400 to-blue-600';
-    if (providerLower.includes('hugging')) return 'from-yellow-400 to-yellow-600';
-    return 'from-gray-400 to-gray-600';
+    if (providerLower.includes('openai')) return 'bg-sage-500';
+    if (providerLower.includes('anthropic')) return 'bg-primary-500';
+    if (providerLower.includes('cohere')) return 'bg-violet-500';
+    if (providerLower.includes('google')) return 'bg-sky-500';
+    if (providerLower.includes('hugging')) return 'bg-amber-500';
+    return 'bg-charcoal-400';
   };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-        {/* Background overlay */}
-        <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" aria-hidden="true"></div>
-
-        {/* Center modal */}
+        <div className="fixed inset-0 transition-opacity bg-charcoal-900/40 backdrop-blur-sm" aria-hidden="true"></div>
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
-        {/* Modal panel */}
         <div
-          className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
+          className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header with gradient */}
-          <div className={`h-3 bg-gradient-to-r ${getProviderColors(provider)}`}></div>
+          {/* Accent bar */}
+          <div className={`h-1.5 ${getProviderAccent(provider)}`}></div>
 
-          {/* Close button */}
-          <div className="absolute top-4 right-4">
-            <button
-              onClick={onClose}
-              className="bg-white rounded-full p-2 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary shadow-lg"
-            >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+          <div className="p-6">
+            {/* Header */}
+            <div className="flex items-start justify-between mb-6">
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold text-charcoal-900 font-display mb-2" title={modelId}>
+                  {modelId}
+                </h3>
+                <p className="text-charcoal-500 font-medium">{provider}</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="badge badge-success">Active</span>
+                <button
+                  onClick={onClose}
+                  className="p-2 rounded-lg text-charcoal-400 hover:text-charcoal-600 hover:bg-charcoal-100 transition-colors"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
 
-          <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-            <div className="sm:flex sm:items-start">
-              <div className="mt-3 text-center sm:mt-0 sm:text-left w-full">
-                {/* Model title and status */}
-                <div className="flex items-start justify-between mb-6">
-                  <div className="flex-1">
-                    <h3 className="text-2xl font-bold text-gray-900 mb-2" title={modelId}>
-                      {modelId}
-                    </h3>
-                    <p className="text-lg text-gray-600">{provider}</p>
+            {/* Model details */}
+            <div className="space-y-6">
+              {/* Basic Information */}
+              <div>
+                <h4 className="text-sm font-semibold text-charcoal-700 uppercase tracking-wider mb-3 flex items-center">
+                  <svg className="h-4 w-4 mr-2 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                  </svg>
+                  Basic Information
+                </h4>
+                <div className="bg-cream-100 rounded-xl p-4 space-y-3">
+                  {providerModel && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium text-charcoal-500">Model Path</span>
+                      <span className="text-sm text-charcoal-900 font-mono bg-white px-2 py-1 rounded">{providerModel}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium text-charcoal-500">Owned By</span>
+                    <span className="text-sm text-charcoal-900">{ownedBy}</span>
                   </div>
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                    Active
-                  </span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium text-charcoal-500">Created</span>
+                    <span className="text-sm text-charcoal-900">{created}</span>
+                  </div>
+                  {apiBase && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium text-charcoal-500">API Base</span>
+                      <span className="text-sm text-charcoal-900 font-mono truncate ml-4 max-w-xs" title={apiBase}>{apiBase}</span>
+                    </div>
+                  )}
                 </div>
+              </div>
 
-                {/* Model details grid */}
-                <div className="space-y-6">
-                  {/* Basic Information */}
-                  <div>
-                    <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
-                      <svg className="h-5 w-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Basic Information
-                    </h4>
-                    <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                      {providerModel && (
-                        <div className="flex justify-between">
-                          <span className="text-sm font-medium text-gray-500">Model Path:</span>
-                          <span className="text-sm text-gray-900 font-mono">{providerModel}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium text-gray-500">Owned By:</span>
-                        <span className="text-sm text-gray-900">{ownedBy}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium text-gray-500">Created:</span>
-                        <span className="text-sm text-gray-900">{created}</span>
-                      </div>
-                      {apiBase && (
-                        <div className="flex justify-between">
-                          <span className="text-sm font-medium text-gray-500">API Base:</span>
-                          <span className="text-sm text-gray-900 font-mono truncate ml-2" title={apiBase}>{apiBase}</span>
-                        </div>
-                      )}
-                    </div>
+              {/* Model Parameters */}
+              {Object.keys(litellmParams).length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-charcoal-700 uppercase tracking-wider mb-3 flex items-center">
+                    <svg className="h-4 w-4 mr-2 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Model Parameters
+                  </h4>
+                  <div className="bg-cream-100 rounded-xl p-4">
+                    <pre className="text-xs text-charcoal-700 overflow-x-auto font-mono">
+                      {JSON.stringify(litellmParams, null, 2)}
+                    </pre>
                   </div>
+                </div>
+              )}
 
-                  {/* Model Parameters */}
-                  {Object.keys(litellmParams).length > 0 && (
-                    <div>
-                      <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
-                        <svg className="h-5 w-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        Model Parameters
-                      </h4>
-                      <div className="bg-gray-50 rounded-lg p-4">
-                        <pre className="text-xs text-gray-800 overflow-x-auto">
-                          {JSON.stringify(litellmParams, null, 2)}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Model Info */}
-                  {Object.keys(modelInfo).length > 0 && (
-                    <div>
-                      <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
-                        <svg className="h-5 w-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Model Information
-                      </h4>
-                      <div className="bg-gray-50 rounded-lg p-4">
-                        <pre className="text-xs text-gray-800 overflow-x-auto">
-                          {JSON.stringify(modelInfo, null, 2)}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Raw Model Data */}
-                  <div>
-                    <h4 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
-                      <svg className="h-5 w-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-                      </svg>
-                      Raw Model Data
-                    </h4>
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <pre className="text-xs text-gray-800 overflow-x-auto">
-                        {JSON.stringify(model, null, 2)}
-                      </pre>
-                    </div>
+              {/* Model Info */}
+              {Object.keys(modelInfo).length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-charcoal-700 uppercase tracking-wider mb-3 flex items-center">
+                    <svg className="h-4 w-4 mr-2 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                    </svg>
+                    Model Information
+                  </h4>
+                  <div className="bg-cream-100 rounded-xl p-4">
+                    <pre className="text-xs text-charcoal-700 overflow-x-auto font-mono">
+                      {JSON.stringify(modelInfo, null, 2)}
+                    </pre>
                   </div>
+                </div>
+              )}
+
+              {/* Raw Model Data */}
+              <div>
+                <h4 className="text-sm font-semibold text-charcoal-700 uppercase tracking-wider mb-3 flex items-center">
+                  <svg className="h-4 w-4 mr-2 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+                  </svg>
+                  Raw Model Data
+                </h4>
+                <div className="bg-cream-100 rounded-xl p-4">
+                  <pre className="text-xs text-charcoal-700 overflow-x-auto font-mono">
+                    {JSON.stringify(model, null, 2)}
+                  </pre>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Footer */}
-          <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+          <div className="px-6 py-4 bg-cream-100 flex justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-primary text-base font-medium text-white hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary sm:ml-3 sm:w-auto sm:text-sm"
+              className="btn-primary"
             >
               Close
             </button>

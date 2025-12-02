@@ -39,15 +39,11 @@ const ApiKeys = () => {
   const fetchAvailableModels = async () => {
     setLoadingModels(true);
     try {
-      // Fetch only public models from the model hub
       const response = await axios.get('/api/public-model-hub');
-      console.log('Public model hub response:', response.data);
       const models = response.data?.map(m => m.model_group) || [];
-      console.log('Extracted model names:', models);
       setAvailableModels(models);
     } catch (err) {
       console.error('Error fetching public models:', err);
-      // Use empty array if API fails - don't show any models if we can't verify they're public
       setAvailableModels([]);
     } finally {
       setLoadingModels(false);
@@ -60,7 +56,7 @@ const ApiKeys = () => {
     fetchApiKeys();
   };
 
-  const handleKeyUpdated = (updatedKey) => {
+  const handleKeyUpdated = () => {
     fetchApiKeys();
   };
 
@@ -100,11 +96,11 @@ const ApiKeys = () => {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="p-8 lg:p-10">
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-            <p className="mt-4 text-gray-600">Loading API keys...</p>
+            <div className="inline-block animate-spin rounded-full h-10 w-10 border-2 border-charcoal-200 border-t-primary-500"></div>
+            <p className="mt-4 text-charcoal-500 font-medium">Loading API keys...</p>
           </div>
         </div>
       </div>
@@ -113,22 +109,22 @@ const ApiKeys = () => {
 
   if (error) {
     return (
-      <div className="p-8">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+      <div className="p-8 lg:p-10">
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-6">
           <div className="flex items-start">
-            <div className="flex-shrink-0">
-              <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
+              <svg className="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
               </svg>
             </div>
-            <div className="ml-3">
-              <h3 className="text-lg font-medium text-red-800">Error loading API keys</h3>
-              <p className="mt-2 text-red-700">{error}</p>
+            <div className="ml-4">
+              <h3 className="text-lg font-semibold text-red-800">Error loading API keys</h3>
+              <p className="mt-1 text-red-700">{error}</p>
               <button
                 onClick={fetchApiKeys}
-                className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                className="mt-4 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors font-medium"
               >
-                Retry
+                Try again
               </button>
             </div>
           </div>
@@ -138,126 +134,114 @@ const ApiKeys = () => {
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="p-8 lg:p-10">
+      {/* Page Header */}
+      <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">API Keys</h1>
-          <p className="text-gray-600">Manage your Acme Inc. API keys</p>
+          <h1 className="text-3xl font-bold text-charcoal-900 font-display mb-2">API Keys</h1>
+          <p className="text-charcoal-500">Manage your Acme Inc. API keys</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-600 transition-colors flex items-center gap-2"
+          className="btn-primary flex items-center gap-2 self-start sm:self-auto"
         >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
           </svg>
           Create API Key
         </button>
       </div>
 
       {apiKeys.length === 0 ? (
-        <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-          </svg>
-          <h3 className="mt-2 text-lg font-medium text-gray-900">No API keys</h3>
-          <p className="mt-1 text-gray-500">Get started by creating a new API key.</p>
+        <div className="text-center py-16 bg-white rounded-2xl border-2 border-dashed border-charcoal-200">
+          <div className="w-16 h-16 rounded-2xl bg-charcoal-100 flex items-center justify-center mx-auto mb-4">
+            <svg className="h-8 w-8 text-charcoal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-charcoal-800 mb-1">No API keys</h3>
+          <p className="text-charcoal-500 mb-6">Get started by creating a new API key.</p>
           <button
             onClick={() => setShowCreateModal(true)}
-            className="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-600 transition-colors"
+            className="btn-primary"
           >
             Create your first API key
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Key
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Models
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Created
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Usage
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
+        <div className="bg-white rounded-2xl shadow-soft border border-charcoal-100/50 overflow-hidden">
+          <table className="min-w-full">
+            <thead>
+              <tr className="table-header">
+                <th className="px-6 py-4 text-left">Name</th>
+                <th className="px-6 py-4 text-left">Key</th>
+                <th className="px-6 py-4 text-left">Models</th>
+                <th className="px-6 py-4 text-left">Created</th>
+                <th className="px-6 py-4 text-left">Usage</th>
+                <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody>
               {apiKeys.map((key) => (
-                <tr key={key.id} className="hover:bg-gray-50">
+                <tr key={key.id} className="table-row">
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">{key.name}</div>
+                    <div className="text-sm font-semibold text-charcoal-900">{key.name}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <code className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                    <code className="text-xs font-mono text-charcoal-600 bg-charcoal-100 px-2.5 py-1 rounded-lg">
                       {key.key}
                     </code>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1.5">
                       {key.models.slice(0, 2).map((model) => (
-                        <span
-                          key={model}
-                          className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-primary-100 text-primary-800"
-                        >
+                        <span key={model} className="badge badge-primary">
                           {model}
                         </span>
                       ))}
                       {key.models.length > 2 && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
+                        <span className="badge badge-neutral">
                           +{key.models.length - 2} more
                         </span>
                       )}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
+                    <div className="text-sm text-charcoal-700">
                       {new Date(key.created_at).toLocaleDateString()}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{key.usage_count.toLocaleString()}</div>
+                    <div className="text-sm font-medium text-charcoal-900">{key.usage_count.toLocaleString()}</div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <div className="flex justify-end gap-2">
+                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                    <div className="flex justify-end gap-1">
                       <button
                         onClick={() => viewKeyDetails(key.id)}
-                        className="text-primary hover:text-primary-700 transition-colors"
+                        className="p-2 rounded-lg text-charcoal-500 hover:text-primary-600 hover:bg-primary-50 transition-colors"
                         title="View details"
                       >
-                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         </svg>
                       </button>
                       <button
                         onClick={() => editKey(key.id)}
-                        className="text-green-600 hover:text-green-900 transition-colors"
+                        className="p-2 rounded-lg text-charcoal-500 hover:text-sage-600 hover:bg-sage-50 transition-colors"
                         title="Edit key"
                       >
-                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
                         </svg>
                       </button>
                       <button
                         onClick={() => setKeyToDelete(key)}
-                        className="text-red-600 hover:text-red-900 transition-colors"
+                        className="p-2 rounded-lg text-charcoal-500 hover:text-red-600 hover:bg-red-50 transition-colors"
                         title="Delete key"
                       >
-                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                         </svg>
                       </button>
                     </div>
@@ -308,41 +292,39 @@ const ApiKeys = () => {
       {keyToDelete && (
         <div className="fixed inset-0 z-50 overflow-y-auto" onClick={() => setKeyToDelete(null)}>
           <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-            <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" aria-hidden="true"></div>
+            <div className="fixed inset-0 transition-opacity bg-charcoal-900/40 backdrop-blur-sm" aria-hidden="true"></div>
             <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
             <div
-              className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+              className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-                <div className="sm:flex sm:items-start">
-                  <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
-                    <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              <div className="p-6">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
+                    <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                     </svg>
                   </div>
-                  <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">Delete API Key</h3>
-                    <div className="mt-2">
-                      <p className="text-sm text-gray-500">
-                        Are you sure you want to delete the API key "<strong>{keyToDelete.name}</strong>"? This action cannot be undone and will immediately invalidate the key.
-                      </p>
-                    </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-charcoal-900">Delete API Key</h3>
+                    <p className="mt-2 text-sm text-charcoal-600">
+                      Are you sure you want to delete <strong className="text-charcoal-900">{keyToDelete.name}</strong>? This action cannot be undone and will immediately invalidate the key.
+                    </p>
                   </div>
                 </div>
               </div>
-              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse gap-3">
+              <div className="px-6 py-4 bg-cream-100 flex flex-row-reverse gap-3">
                 <button
                   type="button"
                   onClick={() => handleDeleteKey(keyToDelete.id)}
-                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm"
+                  className="px-4 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition-colors"
                 >
                   Delete
                 </button>
                 <button
                   type="button"
                   onClick={() => setKeyToDelete(null)}
-                  className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:w-auto sm:text-sm"
+                  className="btn-ghost"
                 >
                   Cancel
                 </button>
