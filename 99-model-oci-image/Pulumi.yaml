@@ -1,0 +1,7 @@
+name: 99-model-oci-image
+runtime: nodejs
+description: Build OCI images containing HuggingFace models for KServe Modelcars
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: ""
