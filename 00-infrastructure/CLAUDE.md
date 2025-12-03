@@ -1,6 +1,6 @@
 # 00-infrastructure
 
-Pulumi TypeScript project for EKS Auto Mode cluster with GPU support via Karpenter and KServe LLMInferenceService.
+Pulumi TypeScript project for EKS cluster with GPU support via Karpenter, EBS CSI driver, and KServe LLMInferenceService.
 
 ## Stack
 
@@ -141,12 +141,12 @@ Reusable component for deploying a complete observability stack. Located in `obs
 - kube-prometheus-stack (Prometheus, Grafana, node-exporter, kube-state-metrics)
 - NVIDIA DCGM Exporter (GPU metrics)
 - Pre-provisioned NVIDIA DCGM dashboard (Grafana ID 12239)
-- EBS storage class for persistent volumes
+
+**Note:** The gp3 StorageClass should be created in `index.ts` before deploying this component.
 
 **Args:**
 - `namespace?: string` - Namespace for monitoring stack (default: `"monitoring"`)
-- `storageClassName?: string` - Storage class name (creates EBS if not provided)
-- `createStorageClass?: boolean` - Create default EBS storage class (default: `true`)
+- `storageClassName?: string` - Storage class name (default: `"gp3"`)
 - `metricsServer?: MetricsServerConfig` - Metrics server configuration
 - `prometheusStack?: PrometheusStackConfig` - Prometheus stack configuration
 - `grafana?: GrafanaConfig` - Grafana configuration
@@ -156,6 +156,7 @@ Reusable component for deploying a complete observability stack. Located in `obs
 ```typescript
 const observability = new ObservabilityComponent("observability", {
     namespace: "monitoring",
+    storageClassName: "gp3",
     metricsServer: { enabled: true, version: "3.13.0" },
     prometheusStack: {
         version: "79.9.0",
@@ -170,13 +171,13 @@ const observability = new ObservabilityComponent("observability", {
     dcgmExporter: {
         enabled: true,
         version: "4.6.0",
-        // Use EKS GPU node label to only schedule on GPU nodes
-        nodeSelector: { "eks.amazonaws.com/instance-gpu-manufacturer": "nvidia" },
+        // Use Karpenter GPU node label to only schedule on GPU nodes
+        nodeSelector: { "karpenter.k8s.aws/instance-gpu-count": "1" },
         tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
         memoryRequest: "512Mi",
         memoryLimit: "1Gi",
     },
-}, { provider: kuebeconfigProvider });
+}, { provider: k8sProvider, dependsOn: [gp3StorageClass] });
 ```
 
 **Access Grafana:**
@@ -190,8 +191,6 @@ pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
 
 Set via `pulumi config set`:
 - `clusterName` (required) - EKS cluster name
-- `gpuInstanceGeneration` (optional) - Min GPU instance generation (default: `"4"`)
-- `gpuInstanceArch` (optional) - CPU architecture (default: `"amd64"`)
 - `huggingface-token` (secret) - HuggingFace API token for model downloads
 
 ## Pulumi ESC Commands
@@ -223,7 +222,9 @@ pulumi up --yes
 GPU nodes are tainted to ensure only GPU workloads run on them:
 - **Taint:** `nvidia.com/gpu=true:NoSchedule`
 
-Non-GPU workloads (cert-manager, kserve-controller, etc.) run on EKS Auto Mode general-purpose nodes.
+Non-GPU workloads (cert-manager, kserve-controller, etc.) run on:
+- System managed node group (with `CriticalAddonsOnly` taint for cluster-critical workloads)
+- Karpenter-provisioned general nodes (for observability, KServe controllers, etc.)
 
 ## Testing the LLM
 
@@ -258,10 +259,20 @@ curl http://localhost:8000/v1/chat/completions \
 
 ## NodePools
 
-Two GPU NodePools are configured:
+Three NodePools are configured via Karpenter:
 
-- **gpu-standard**: `g5.2xlarge` (A10G 24GB) - For 7B-13B models
-- **gpu-a100**: `p4de.24xlarge` (8x A100 80GB) - For large MoE models (480B+)
+- **general**: `m6i.large`, `m6i.xlarge`, etc. - For general workloads (observability, KServe controllers)
+- **gpu-standard**: `g5.xlarge`, `g5.2xlarge`, `g5.4xlarge` (A10G 24GB) - For 7B-13B models
+- **gpu-a100** (commented): `p4de.24xlarge` (8x A100 80GB) - For large MoE models (480B+)
+
+## Infrastructure Components
+
+- **EKS Cluster**: Standard EKS cluster with API authentication mode
+- **System Node Group**: Managed node group for cluster-critical workloads (Karpenter, CoreDNS, etc.)
+- **EBS CSI Driver**: Installed via EKS addon with Pod Identity for persistent volume provisioning
+- **gp3 StorageClass**: Default storage class for all persistent volumes
+- **Karpenter**: Manages GPU and general workload nodes with Bottlerocket AMI
+- **AWS Load Balancer Controller**: Manages ALB/NLB for Ingress and Service resources
 
 ## Gated Models
 
