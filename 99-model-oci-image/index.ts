@@ -1,16 +1,9 @@
 import * as pulumi from "@pulumi/pulumi";
-import * as aws from "@pulumi/aws";
-import {EcrRepositoryComponent} from "../01-maas/infra/ecrComponent";
+import {EcrRepositoryComponent} from "./components/ecrRepositoryComponent";
+import {CodeBuildModelBuilderComponent} from "./components/codeBuildModelBuilderComponent";
 
-// Configuration
 const config = new pulumi.Config();
-const modelId = config.require("modelId");
-const imageTag = config.get("imageTag") || "v1.0";
-// HuggingFace token for gated models (optional, can be empty for public models)
 const hfToken = config.getSecret("huggingface-token") || "";
-
-// Derive repository name from model ID (e.g., "meta-llama/Meta-Llama-3-8B-Instruct" -> "meta-llama-meta-llama-3-8b-instruct")
-const repoName = modelId.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
 
 const environment = pulumi.getStack();
 const tags = {
@@ -19,138 +12,92 @@ const tags = {
     ManagedBy: "Pulumi",
 };
 
-
-// Create ECR repository using component resource
-const ecr = new EcrRepositoryComponent(`${repoName}-ecr`, {
-    repositoryName: `kserve-models/${repoName}`,
+// Meta Llama 3 8B Instruct
+const llamaEcr = new EcrRepositoryComponent("meta-llama-3-8b-ecr", {
+    repositoryName: "kserve-models/meta-llama-meta-llama-3-8b-instruct",
     scanOnPush: true,
-    imageTagMutability: "IMMUTABLE",
+    imageTagMutability: "MUTABLE",
     imageRetentionCount: 10,
-    forceDelete: true, // Set to false for production
+    forceDelete: true,
     tags: tags,
 });
 
-// Create IAM role for CodeBuild
-const codeBuildRole = new aws.iam.Role("codebuild-role", {
-    assumeRolePolicy: JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [{
-            Effect: "Allow",
-            Principal: {
-                Service: "codebuild.amazonaws.com",
-            },
-            Action: "sts:AssumeRole",
-        }],
-    }),
+const llamaBuilder = new CodeBuildModelBuilderComponent("meta-llama-3-8b-builder", {
+    ecrRepositoryArn: llamaEcr.repositoryArn,
+    ecrRepositoryName: llamaEcr.repository.name,
+    modelId: "meta-llama/Meta-Llama-3-8B-Instruct",
+    imageTag: "latest",
+    hfToken: hfToken,
+    tags: tags,
 });
 
-const current = aws.getCallerIdentity({});
-const region = aws.getRegion({});
-
-// Create IAM policy for CodeBuild with ECR and CloudWatch permissions
-const codeBuildPolicy = new aws.iam.RolePolicy("codebuild-policy", {
-    role: codeBuildRole.id,
-    policy: pulumi.all([ecr.repositoryArn, current, region]).apply(([repoArn, acc, reg]) => JSON.stringify({
-        Version: "2012-10-17",
-        Statement: [
-            {
-                Effect: "Allow",
-                Action: [
-                    "ecr:BatchCheckLayerAvailability",
-                    "ecr:CompleteLayerUpload",
-                    "ecr:GetAuthorizationToken",
-                    "ecr:InitiateLayerUpload",
-                    "ecr:PutImage",
-                    "ecr:UploadLayerPart",
-                ],
-                Resource: "*",
-            },
-            {
-                Effect: "Allow",
-                Action: [
-                    "logs:CreateLogGroup",
-                    "logs:CreateLogStream",
-                    "logs:PutLogEvents",
-                ],
-                Resource: `arn:aws:logs:${reg.name}:${acc.accountId}:log-group:/aws/codebuild/*`,
-            },
-            {
-                Effect: "Allow",
-                Action: [
-                    "s3:GetObject",
-                    "s3:GetObjectVersion",
-                    "s3:ListBucket",
-                ],
-                Resource: "*",
-            },
-        ],
-    })),
+// Qwen3-8B
+const qwenEcr = new EcrRepositoryComponent("qwen3-8b-ecr", {
+    repositoryName: "kserve-models/qwen-qwen3-8b",
+    scanOnPush: true,
+    imageTagMutability: "MUTABLE",
+    imageRetentionCount: 10,
+    forceDelete: true,
+    tags: tags,
 });
 
-// Create S3 bucket for source files
-const sourceBucket = new aws.s3.Bucket("source-bucket", {
-    forceDestroy: true,
+const qwenBuilder = new CodeBuildModelBuilderComponent("qwen3-8b-builder", {
+    ecrRepositoryArn: qwenEcr.repositoryArn,
+    ecrRepositoryName: qwenEcr.repository.name,
+    modelId: "Qwen/Qwen3-8B",
+    imageTag: "latest",
+    hfToken: hfToken,
+    tags: tags,
 });
 
-// Create a ZIP archive with all source files
-const sourceArchive = new aws.s3.BucketObject("source-archive", {
-    bucket: sourceBucket.id,
-    key: "source.zip",
-    source: new pulumi.asset.AssetArchive({
-        "buildspec.yml": new pulumi.asset.FileAsset("./docker/buildspec.yml"),
-        "Dockerfile": new pulumi.asset.FileAsset("./docker/Dockerfile"),
-        "download_model.py": new pulumi.asset.FileAsset("./docker/download_model.py"),
-    }),
+// Qwen2.5-7B-Instruct
+const qwen25Ecr = new EcrRepositoryComponent("qwen25-7b-ecr", {
+    repositoryName: "kserve-models/qwen-qwen2-5-7b-instruct",
+    scanOnPush: true,
+    imageTagMutability: "MUTABLE",
+    imageRetentionCount: 10,
+    forceDelete: true,
+    tags: tags,
 });
 
-// Create CodeBuild project
-const codeBuildProject = new aws.codebuild.Project("docker-build-project", {
-    name: "codebuild-docker-sample",
-    description: "CodeBuild project to build and push Docker images to ECR",
-    serviceRole: codeBuildRole.arn,
-    artifacts: {
-        type: "NO_ARTIFACTS",
-    },
-    environment: {
-        computeType: "BUILD_GENERAL1_SMALL",
-        image: "aws/codebuild/standard:5.0",
-        type: "LINUX_CONTAINER",
-        privilegedMode: true, // Required for Docker builds
-        environmentVariables: [
-            {
-                name: "AWS_DEFAULT_REGION",
-                value: region.then(r => r.name),
-            },
-            {
-                name: "AWS_ACCOUNT_ID",
-                value: current.then(c => c.accountId),
-            },
-            {
-                name: "IMAGE_REPO_NAME",
-                value: ecr.repository.name,
-            },
-            {
-                name: "IMAGE_TAG",
-                value: imageTag,
-            },
-            {
-                name: "MODEL_ID",
-                value: modelId,
-            },
-            {
-                name: "HF_TOKEN",
-                value: hfToken,
-            },
-        ],
-    },
-    source: {
-        type: "S3",
-        location: pulumi.interpolate`${sourceBucket.bucket}/source.zip`,
-    },
-}, { dependsOn: [codeBuildPolicy, sourceArchive] });
+const qwen25Builder = new CodeBuildModelBuilderComponent("qwen25-7b-builder", {
+    ecrRepositoryArn: qwen25Ecr.repositoryArn,
+    ecrRepositoryName: qwen25Ecr.repository.name,
+    modelId: "Qwen/Qwen2.5-7B-Instruct",
+    imageTag: "latest",
+    hfToken: hfToken,
+    tags: tags,
+});
 
-// Export ECR repository details
-export const ecrRepositoryUrl = ecr.repositoryUrl;
-export const ecrRepositoryName = ecr.repository.name;
-export const sourceBucketName = sourceBucket.id;
-export const codeBuildProjectName = codeBuildProject.name;
+// OpenAI GPT-OSS-20B
+const gptOssEcr = new EcrRepositoryComponent("gpt-oss-20b-ecr", {
+    repositoryName: "kserve-models/openai-gpt-oss-20b",
+    scanOnPush: true,
+    imageTagMutability: "MUTABLE",
+    imageRetentionCount: 10,
+    forceDelete: true,
+    tags: tags,
+});
+
+const gptOssBuilder = new CodeBuildModelBuilderComponent("gpt-oss-20b-builder", {
+    ecrRepositoryArn: gptOssEcr.repositoryArn,
+    ecrRepositoryName: gptOssEcr.repository.name,
+    modelId: "openai/gpt-oss-20b",
+    imageTag: "latest",
+    hfToken: hfToken,
+    computeType: "BUILD_GENERAL1_LARGE",
+    tags: tags,
+});
+
+// Exports
+export const llamaEcrUrl = llamaEcr.repositoryUrl;
+export const llamaCodeBuildProject = llamaBuilder.codeBuildProjectName;
+
+export const qwenEcrUrl = qwenEcr.repositoryUrl;
+export const qwenCodeBuildProject = qwenBuilder.codeBuildProjectName;
+
+export const qwen25EcrUrl = qwen25Ecr.repositoryUrl;
+export const qwen25CodeBuildProject = qwen25Builder.codeBuildProjectName;
+
+export const gptOssEcrUrl = gptOssEcr.repositoryUrl;
+export const gptOssCodeBuildProject = gptOssBuilder.codeBuildProjectName;

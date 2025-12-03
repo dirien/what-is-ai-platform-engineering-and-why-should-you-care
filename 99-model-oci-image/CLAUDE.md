@@ -31,15 +31,61 @@ Instead of downloading models from HuggingFace every time a pod starts, this pac
 3. **Image pushed to ECR** - Ready for use with KServe Modelcars
 4. **KServe pulls from ECR** - Model cached on nodes for fast startup
 
+## Components
+
+The project uses reusable Pulumi component resources:
+
+- **EcrRepositoryComponent** - Creates an ECR repository with lifecycle policies and security best practices
+- **CodeBuildModelBuilderComponent** - Creates CodeBuild project with IAM roles, S3 source bucket, and build configuration
+
 ## Configuration
 
-| Config Key | Description | Example |
-|------------|-------------|---------|
-| `modelId` | HuggingFace model ID | `meta-llama/Meta-Llama-3-8B-Instruct` |
-| `imageTag` | Docker image tag | `v1.0` |
-| `huggingface-token` | HuggingFace token (secret, for gated models) | `hf_xxx` |
+The HuggingFace token is retrieved from Pulumi ESC environment. Model configurations are defined directly in `index.ts`.
+
+| Config Key | Description | Source |
+|------------|-------------|--------|
+| `huggingface-token` | HuggingFace token for gated models | Pulumi ESC |
+
+### CodeBuild Compute Types
+
+For larger models (>10GB), use a larger compute type:
+
+| Compute Type | Memory | vCPUs | Use Case |
+|-------------|--------|-------|----------|
+| `BUILD_GENERAL1_SMALL` | 3 GB | 2 | Models < 8GB (default) |
+| `BUILD_GENERAL1_MEDIUM` | 7 GB | 4 | Models 8-15GB |
+| `BUILD_GENERAL1_LARGE` | 15 GB | 8 | Models 15-40GB |
+| `BUILD_GENERAL1_2XLARGE` | 145 GB | 72 | Very large models |
 
 ## Usage
+
+### Adding a New Model
+
+Edit `index.ts` and add ECR + CodeBuild component instances:
+
+```typescript
+// Example: Add Mistral-7B
+const mistralEcr = new EcrRepositoryComponent("mistral-7b-ecr", {
+    repositoryName: "kserve-models/mistral-7b",
+    scanOnPush: true,
+    imageTagMutability: "MUTABLE",
+    imageRetentionCount: 10,
+    forceDelete: true,
+    tags: tags,
+});
+
+const mistralBuilder = new CodeBuildModelBuilderComponent("mistral-7b-builder", {
+    ecrRepositoryArn: mistralEcr.repositoryArn,
+    ecrRepositoryName: mistralEcr.repository.name,
+    modelId: "mistralai/Mistral-7B-v0.1",
+    imageTag: "latest",
+    hfToken: hfToken,
+    computeType: "BUILD_GENERAL1_SMALL",  // Optional, defaults to SMALL
+    tags: tags,
+});
+```
+
+### Deploy and Build
 
 ```bash
 cd 99-model-oci-image
@@ -50,23 +96,22 @@ pulumi install
 # Select stack
 pulumi stack select dev
 
-# Set HuggingFace token for gated models (like LLaMA)
-pulumi config set --secret huggingface-token hf_your_token_here
-
-# Deploy (creates ECR repo, CodeBuild project)
+# Deploy (creates ECR repos, CodeBuild projects)
 pulumi up
 
-# Trigger the build via AWS CLI
+# Trigger builds via AWS CLI
 pulumi env run pulumi-idp/auth -- aws codebuild start-build \
-  --project-name codebuild-docker-sample \
-  --region us-west-2
+  --project-name <project-name-from-output>
 ```
 
-## AWS ECR Limits
+## Current Models
 
-- **Max layer size**: 10 GB per layer
-- **Max images per repo**: 20,000
-- **Recommendation**: For models > 10GB, model files are typically split across multiple layers automatically
+| Model | Compute Type | ECR Repository |
+|-------|-------------|----------------|
+| meta-llama/Meta-Llama-3-8B-Instruct | SMALL | kserve-models/meta-llama-meta-llama-3-8b-instruct |
+| Qwen/Qwen3-8B | SMALL | kserve-models/qwen-qwen3-8b |
+| Qwen/Qwen2.5-7B-Instruct | SMALL | kserve-models/qwen-qwen2-5-7b-instruct |
+| openai/gpt-oss-20b | LARGE | kserve-models/openai-gpt-oss-20b |
 
 ## KServe Usage
 
@@ -74,7 +119,7 @@ After building, use the OCI URI in your LLMInferenceService (in `00-infrastructu
 
 ```typescript
 const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
-    modelUri: "oci://052848974346.dkr.ecr.us-west-2.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:v1.0",
+    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest",
     modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
     storageType: "oci",  // Use OCI storage via Modelcars
     // ... other config
@@ -92,7 +137,9 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
 
 ## Files
 
-- `index.ts` - Pulumi infrastructure code (ECR, CodeBuild, S3)
+- `index.ts` - Pulumi infrastructure code with model configurations
+- `components/ecrRepositoryComponent.ts` - ECR repository component
+- `components/codeBuildModelBuilderComponent.ts` - CodeBuild project component
 - `docker/Dockerfile` - Multi-stage Dockerfile
 - `docker/download_model.py` - Python script to download HF models
 - `docker/buildspec.yml` - AWS CodeBuild build specification
