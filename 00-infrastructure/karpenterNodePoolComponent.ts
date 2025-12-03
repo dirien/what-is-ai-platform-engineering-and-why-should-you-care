@@ -9,7 +9,7 @@ export type CapacityType = "spot" | "on-demand";
 /**
  * Consolidation policy for node disruption
  */
-export type ConsolidationPolicy = "WhenEmpty" | "WhenUnderutilized";
+export type ConsolidationPolicy = "WhenEmpty" | "WhenEmptyOrUnderutilized";
 
 /**
  * Taint effect for node taints
@@ -71,7 +71,7 @@ export interface ResourceLimits {
  */
 export interface DisruptionConfig {
     /**
-     * Policy for consolidating nodes (WhenEmpty or WhenUnderutilized)
+     * Policy for consolidating nodes (WhenEmpty or WhenEmptyOrUnderutilized)
      */
     consolidationPolicy?: ConsolidationPolicy;
     /**
@@ -242,12 +242,13 @@ export class KarpenterNodePoolComponent extends pulumi.ComponentResource {
         }));
 
         // Build the spec
+        // Using standard Karpenter (not EKS Auto Mode) with EC2NodeClass
         const spec: any = {
             template: {
                 spec: {
                     nodeClassRef: {
-                        group: "eks.amazonaws.com",
-                        kind: "NodeClass",
+                        group: "karpenter.k8s.aws",
+                        kind: "EC2NodeClass",
                         name: args.nodeClassName || "default",
                     },
                     requirements,

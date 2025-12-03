@@ -117,14 +117,9 @@ export interface ObservabilityComponentArgs {
     namespace?: pulumi.Input<string>;
     /**
      * Storage class name for persistent volumes
-     * If not provided, a default EBS storage class will be created
+     * @default "gp3" (assumes gp3 StorageClass is created in main infrastructure)
      */
     storageClassName?: pulumi.Input<string>;
-    /**
-     * Create a default EBS storage class
-     * @default true
-     */
-    createStorageClass?: pulumi.Input<boolean>;
     /**
      * Metrics server configuration
      */
@@ -153,10 +148,6 @@ export interface ObservabilityComponentArgs {
  * and pre-provisions the NVIDIA DCGM dashboard for GPU monitoring.
  */
 export class ObservabilityComponent extends pulumi.ComponentResource {
-    /**
-     * The storage class for persistent volumes
-     */
-    public readonly storageClass?: k8s.storage.v1.StorageClass;
     /**
      * The metrics server Helm release
      */
@@ -209,25 +200,10 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
             memoryLimit: args.dcgmExporter?.memoryLimit ?? "1Gi",
         };
 
-        // Create storage class if needed
-        let storageClassName = args.storageClassName;
-        if (args.createStorageClass !== false && !storageClassName) {
-            this.storageClass = new k8s.storage.v1.StorageClass(`${name}-storage-class`, {
-                metadata: {
-                    name: `${name}-ebs-sc`,
-                    annotations: {
-                        "storageclass.kubernetes.io/is-default-class": "true",
-                    },
-                },
-                provisioner: "ebs.csi.eks.amazonaws.com",
-                volumeBindingMode: "WaitForFirstConsumer",
-                parameters: {
-                    type: "gp3",
-                    encrypted: "true",
-                },
-            }, { parent: this });
-            storageClassName = this.storageClass.metadata.name;
-        }
+
+        // Use provided storage class name or default to "gp3"
+        // The gp3 StorageClass should be created in the main infrastructure (index.ts)
+        const storageClassName = args.storageClassName ?? "gp3";
 
         // Deploy Metrics Server
         if (metricsServerConfig.enabled) {
@@ -288,11 +264,6 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
         }
 
         // Deploy kube-prometheus-stack
-        const prometheusStackDeps: pulumi.Resource[] = [];
-        if (this.storageClass) {
-            prometheusStackDeps.push(this.storageClass);
-        }
-
         this.kubePrometheusStack = new k8s.helm.v3.Release(`${name}-kube-prometheus-stack`, {
             chart: "kube-prometheus-stack",
             version: prometheusStackConfig.version,
@@ -351,7 +322,7 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
                     enabled: true,
                 },
             },
-        }, { parent: this, dependsOn: prometheusStackDeps });
+        }, { parent: this });
 
         // Extract Grafana service name from the release
         this.grafanaServiceName = this.kubePrometheusStack.name.apply(
