@@ -304,7 +304,9 @@ export class KServeComponent extends pulumi.ComponentResource {
                         enableModelcar: true,
                         cpuModelcar: "10m",
                         memoryModelcar: "15Mi",
-                        uidModelcar: 1010,
+                        // Use UID 0 (root) for modelcar to ensure compatibility with vLLM containers
+                        // UID 1010 causes issues with Python's getpass.getuser() in shared process namespace
+                        uidModelcar: 0,
                     }),
                 },
             },

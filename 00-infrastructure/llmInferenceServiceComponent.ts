@@ -282,12 +282,21 @@ export class LLMInferenceServiceConfigComponent extends pulumi.ComponentResource
 }
 
 /**
+ * Storage type for model loading
+ * - "hf" - Download from HuggingFace (requires HF_TOKEN for gated models)
+ * - "oci" - Use OCI image with pre-packaged model (faster startup, cached on nodes via Modelcars)
+ */
+export type ModelStorageType = "hf" | "oci";
+
+/**
  * Arguments for creating an LLMInferenceService component
  */
 export interface LLMInferenceServiceArgs {
     /**
-     * The model URI (e.g., "hf://Qwen/Qwen2.5-7B-Instruct")
-     * Supports HuggingFace (hf://), S3 (s3://), and other model sources
+     * The model URI
+     * For HuggingFace: "hf://Qwen/Qwen2.5-7B-Instruct" or just the model ID
+     * For OCI: "oci://registry.example.com/model:tag"
+     * Supports HuggingFace (hf://), OCI (oci://), S3 (s3://), and other model sources
      */
     modelUri: pulumi.Input<string>;
 
@@ -295,6 +304,22 @@ export interface LLMInferenceServiceArgs {
      * The model name for the inference endpoint (e.g., "Qwen/Qwen2.5-7B-Instruct")
      */
     modelName: pulumi.Input<string>;
+
+    /**
+     * Storage type for model loading
+     * - "hf" - Download from HuggingFace (default, requires HF_TOKEN for gated models)
+     * - "oci" - Use OCI image with pre-packaged model (faster startup via KServe Modelcars)
+     *
+     * When using "oci", the modelUri should be an OCI image URI like:
+     * "oci://registry.example.com/kserve-models/llama3:v1.0"
+     *
+     * Benefits of OCI storage:
+     * - Faster pod startup (model is cached on nodes)
+     * - No HuggingFace token needed at runtime
+     * - Works with private registries (ECR, GCR, etc.)
+     * @default "hf"
+     */
+    storageType?: ModelStorageType;
 
     /**
      * Kubernetes namespace for the deployment

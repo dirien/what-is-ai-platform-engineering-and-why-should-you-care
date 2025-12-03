@@ -1,0 +1,9 @@
+environment:
+- pulumi-idp/auth
+config:
+  # HuggingFace model to download (e.g., "meta-llama/Meta-Llama-3-8B-Instruct")
+  99-model-oci-image:modelId: "meta-llama/Meta-Llama-3-8B-Instruct"
+  # Image tag version
+  99-model-oci-image:imageTag: "v1.0"
+  # AWS region for ECR
+  aws:region: us-west-2

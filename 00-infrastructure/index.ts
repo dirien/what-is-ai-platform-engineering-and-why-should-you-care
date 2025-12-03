@@ -241,12 +241,17 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     ],
 }, {provider: kuebeconfigProvider});
 
-// Deploy Meta-Llama-3-8B-Instruct - Meta's instruction-tuned model with 8K context
+// Deploy Meta-Llama-3-8B-Instruct using OCI storage (KServe Modelcars)
+// Uses pre-packaged model image from ECR for faster startup (no HF download at runtime)
+// Model image built with 99-model-oci-image project
 // Runs on G5 instances with A10G GPU (24GB VRAM)
-// Reference: https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
+// Reference: https://kserve.github.io/website/docs/model-serving/storage/providers/oci
 const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
-    modelUri: "hf://meta-llama/Meta-Llama-3-8B-Instruct",
+    // OCI URI pointing to ECR repository with pre-packaged model
+    // Built using: cd 99-model-oci-image && pulumi up
+    modelUri: "oci://052848974346.dkr.ecr.us-west-2.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:v1.0",
     modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
+    storageType: "oci",  // Use OCI storage via Modelcars (faster startup, cached on nodes)
     namespace: "default",
     replicas: 1,
     resources: {
@@ -256,14 +261,13 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
         cpuRequest: "2",
         memoryRequest: "16Gi",
     },
-    // ServiceAccount with HF secret access for gated model downloads
-    serviceAccountName: "hf-service-account",
+    // No serviceAccountName needed - OCI images use standard ECR auth
     // vLLM args for A10G GPU (24GB VRAM)
     args: [
         "--max_model_len=8192",
         "--gpu_memory_utilization=0.9",
     ],
-}, {provider: kuebeconfigProvider, dependsOn: [hfServiceAccount]});
+}, {provider: kuebeconfigProvider, dependsOn: [kserve]});
 
 // TODO: Deploy Qwen3-Coder-480B-A35B-Instruct when p4de.24xlarge capacity is available
 // Qwen3-Coder is a 480B parameter MoE model (35B active) with 256K context
