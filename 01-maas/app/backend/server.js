@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 const LITELLM_API_BASE = process.env.LITELLM_API_BASE || 'https://litellm-api.up.railway.app';
+const LITELLM_PUBLIC_URL = process.env.LITELLM_PUBLIC_URL || LITELLM_API_BASE; // Public URL for code examples
 const LITELLM_MASTER_KEY = process.env.LITELLM_MASTER_KEY || 'sk-litellm-master-key';
 const JUPYTERHUB_API_URL = process.env.JUPYTERHUB_API_URL || 'http://proxy-public.jupyterhub.svc.cluster.local';
 const JUPYTERHUB_PUBLIC_URL = process.env.JUPYTERHUB_PUBLIC_URL || JUPYTERHUB_API_URL; // Public URL for browser redirects
@@ -28,6 +29,14 @@ app.use(express.static(frontendDistPath));
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Backend server is running' });
+});
+
+// Get configuration (LiteLLM public URL for code examples)
+app.get('/api/config', (req, res) => {
+  res.json({
+    litellmPublicUrl: LITELLM_PUBLIC_URL,
+    jupyterhubPublicUrl: JUPYTERHUB_PUBLIC_URL
+  });
 });
 
 // Get all models

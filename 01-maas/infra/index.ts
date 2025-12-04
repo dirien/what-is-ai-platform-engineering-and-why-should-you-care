@@ -187,6 +187,7 @@ export const imageDigest = image.digest;
 export const maasNamespace = maas.namespace.metadata.name;
 export const litellmReleaseName = maas.litellmReleaseName;
 export const litellmServiceUrl = maas.litellmServiceUrl;
+export const litellmPublicUrl = maas.litellmPublicUrl;
 export const maasServiceUrl = maas.appServiceUrl;
 export const maasPublicUrl = maas.publicUrl;
 

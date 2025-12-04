@@ -7,13 +7,26 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
   const [regenerateError, setRegenerateError] = useState(null);
   const [calculatedSpend, setCalculatedSpend] = useState(0);
   const [copiedExample, setCopiedExample] = useState(null);
+  const [litellmUrl, setLitellmUrl] = useState('http://localhost:4000');
 
-  // Fetch spend data when modal opens
+  // Fetch spend data and config when modal opens
   useEffect(() => {
     if (apiKey) {
       fetchSpendData();
+      fetchConfig();
     }
   }, [apiKey]);
+
+  const fetchConfig = async () => {
+    try {
+      const response = await axios.get('/api/config');
+      if (response.data.litellmPublicUrl) {
+        setLitellmUrl(response.data.litellmPublicUrl);
+      }
+    } catch (err) {
+      console.error('Failed to fetch config:', err);
+    }
+  };
 
   const fetchSpendData = async () => {
     try {
@@ -127,7 +140,7 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
 
   const defaultModel = models[0] || 'gpt-3.5-turbo';
 
-  const curlExample = `curl https://api.acme-inc.com/v1/chat/completions \\
+  const curlExample = `curl ${litellmUrl}/chat/completions \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${apiKey.key}" \\
   -d '{
@@ -144,7 +157,7 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
 
 client = OpenAI(
     api_key="${apiKey.key}",
-    base_url="https://api.acme-inc.com/v1"
+    base_url="${litellmUrl}"
 )
 
 response = client.chat.completions.create(
@@ -160,7 +173,7 @@ print(response.choices[0].message.content)`;
 
 const client = new OpenAI({
   apiKey: '${apiKey.key}',
-  baseURL: 'https://api.acme-inc.com/v1'
+  baseURL: '${litellmUrl}'
 });
 
 async function main() {

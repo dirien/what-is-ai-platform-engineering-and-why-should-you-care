@@ -95,6 +95,9 @@ The frontend will run on `http://localhost:3000`
 
 The backend exposes the following endpoints:
 
+### Configuration
+- `GET /api/config` - Get platform configuration (LiteLLM public URL, JupyterHub URL)
+
 ### Models
 - `GET /api/health` - Health check endpoint
 - `GET /api/models` - Get all available models

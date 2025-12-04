@@ -89,6 +89,7 @@ After `pulumi up`, you'll get:
 - `maasNamespace` - MaaS Kubernetes namespace
 - `litellmReleaseName` - LiteLLM Helm release name
 - `litellmServiceUrl` - Internal cluster URL for LiteLLM API
+- `litellmPublicUrl` - Public NLB URL for LiteLLM API (for external access)
 - `maasServiceUrl` - Internal cluster URL for MaaS app
 - `maasPublicUrl` - Public NLB URL for MaaS app
 - `jupyterhubNamespace` - JupyterHub Kubernetes namespace
