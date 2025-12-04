@@ -224,7 +224,8 @@ const karpenter = new KarpenterComponent("karpenter", {
 
 // EC2NodeClass for GPU nodes with Bottlerocket and EBS snapshot support
 // Uses Bottlerocket for fast boot times and optimized container runtime
-// The data volume (/dev/xvdb) can be pre-populated with container images via EBS snapshots
+// The data volume (/dev/xvdb) is pre-populated with container images via EBS snapshot
+// Snapshot contains: Meta Llama 3 8B, Qwen 2.5 7B, Qwen 3 8B, llm-d-dev images
 const gpuNodeClass = karpenter.createEC2NodeClass("gpu-nodeclass", {
     name: "gpu-bottlerocket",
     amiFamily: "Bottlerocket",
@@ -242,14 +243,15 @@ const gpuNodeClass = karpenter.createEC2NodeClass("gpu-nodeclass", {
         {
             deviceName: "/dev/xvdb",
             ebs: {
-                volumeSize: "200Gi",  // Large data volume for container images
+                volumeSize: "250Gi",  // Data volume for pre-cached model images
                 volumeType: "gp3",
-                iops: 10000,
-                throughput: 500,
+                iops: 16000,          // Max gp3 IOPS for faster container/model loading
+                throughput: 1000,     // Max gp3 throughput (MB/s) for faster sequential reads
                 encrypted: true,
                 deleteOnTermination: true,
-                // EBS snapshot with pre-cached container images can be added here
-                // snapshotID: "snap-xxxxxxxxx",
+                // EBS snapshot with pre-cached container images (built via 99-model-oci-image)
+                // Contains: meta-llama-3-8b-instruct, qwen2.5-7b-instruct, qwen3-8b, gpt-oss-20b, llm-d-dev:v0.2.2
+                snapshotID: "snap-0dca38ea429a621b1",
             },
         },
     ],
@@ -401,14 +403,14 @@ const observability = new ObservabilityComponent("observability", {
     },
 }, {provider: k8sProvider, dependsOn: [generalNodePool, gpuNodePool, gp3StorageClass]});
 
-// COMMENTED OUT - Model deployments (enable after KServe is installed)
 // Deploy Qwen2.5-7B-Instruct using KServe LLMInferenceService (v1alpha1)
-// Uses the new GenAI-first API with built-in router, gateway and scheduler
+// Uses OCI storage for faster startup - model image is pre-cached on GPU nodes
 // Runs on G5 instances with A10G GPU (24GB VRAM)
 // Reference: https://kserve.github.io/website/docs/getting-started/genai-first-llmisvc
 const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
-    modelUri: "hf://Qwen/Qwen2.5-7B-Instruct",
+    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen2-5-7b-instruct:latest",
     modelName: "Qwen/Qwen2.5-7B-Instruct",
+    storageType: "oci",
     namespace: "default",
     replicas: 1,
     resources: {
@@ -425,34 +427,28 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     ],
 }, {provider: k8sProvider, dependsOn: [kserve]});
 
-// COMMENTED OUT FOR MIGRATION TO STANDARD KARPENTER WITH EBS SNAPSHOTS
-// Deploy Meta-Llama-3-8B-Instruct using OCI storage (KServe Modelcars)
-// Uses pre-packaged model image from ECR for faster startup (no HF download at runtime)
-// Model image built with 99-model-oci-image project
-// Runs on G5 instances with A10G GPU (24GB VRAM)
-// Reference: https://kserve.github.io/website/docs/model-serving/storage/providers/oci
-// const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
-//     // OCI URI pointing to ECR repository with pre-packaged model
-//     // Built using: cd 99-model-oci-image && pulumi up
-//     modelUri: "oci://052848974346.dkr.ecr.us-west-2.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:v1.0",
-//     modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
-//     storageType: "oci",  // Use OCI storage via Modelcars (faster startup, cached on nodes)
-//     namespace: "default",
-//     replicas: 1,
-//     resources: {
-//         cpuLimit: "4",
-//         memoryLimit: "32Gi",
-//         gpuCount: 1,
-//         cpuRequest: "2",
-//         memoryRequest: "16Gi",
-//     },
-//     // No serviceAccountName needed - OCI images use standard ECR auth
-//     // vLLM args for A10G GPU (24GB VRAM)
-//     args: [
-//         "--max_model_len=8192",
-//         "--gpu_memory_utilization=0.9",
-//     ],
-// }, {provider: kuebeconfigProvider, dependsOn: [kserve]});
+
+// Deploy Meta Llama 3 8B Instruct using KServe LLMInferenceService
+// Uses OCI storage for faster startup - model image is pre-cached on GPU nodes via EBS snapshot
+// The snapshot (snap-0dca38ea429a621b1) contains the container image, eliminating download time
+const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
+    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest",
+    modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
+    storageType: "oci",
+    namespace: "default",
+    replicas: 1,
+    resources: {
+        cpuLimit: "4",
+        memoryLimit: "32Gi",
+        gpuCount: 1,
+        cpuRequest: "2",
+        memoryRequest: "16Gi",
+    },
+    args: [
+        "--max_model_len=8192",
+        "--gpu_memory_utilization=0.9",
+    ],
+}, {provider: k8sProvider, dependsOn: [kserve]});
 
 
 export const escName = pulumi.interpolate`${environmentResource.project}/${environmentResource.name}`
