@@ -2,6 +2,10 @@
 
 This Pulumi project builds OCI container images containing HuggingFace models for use with KServe Modelcars.
 
+## Related Documentation
+
+- [EBS Snapshot Guide](./EBS_SNAPSHOT_GUIDE.md) - How to create EBS snapshots with pre-cached container images for faster node startup
+
 ## Purpose
 
 Instead of downloading models from HuggingFace every time a pod starts, this packages models into OCI images that can be cached on Kubernetes nodes, significantly reducing startup times.
