@@ -269,7 +269,7 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
             storage: {
                 capacity: storageSize,
                 dynamic: {
-                    storageClass: args.storageClassName || "observability-ebs-sc",
+                    storageClass: args.storageClassName || "gp3",
                 },
             },
             extraEnv: {
