@@ -88,6 +88,10 @@ export class MaaSComponent extends pulumi.ComponentResource {
      */
     public readonly litellm: k8s.helm.v3.Release;
     /**
+     * The LiteLLM LoadBalancer service
+     */
+    public readonly litellmService: k8s.core.v1.Service;
+    /**
      * The MaaS app deployment
      */
     public readonly appDeployment: k8s.apps.v1.Deployment;
@@ -99,6 +103,10 @@ export class MaaSComponent extends pulumi.ComponentResource {
      * LiteLLM service URL (internal)
      */
     public readonly litellmServiceUrl: pulumi.Output<string>;
+    /**
+     * LiteLLM public URL (LoadBalancer)
+     */
+    public readonly litellmPublicUrl: pulumi.Output<string>;
     /**
      * MaaS app service URL (internal)
      */
@@ -172,6 +180,53 @@ export class MaaSComponent extends pulumi.ComponentResource {
         this.litellmReleaseName = this.litellm.name;
         this.litellmServiceUrl = pulumi.interpolate`http://${this.litellm.name}.${namespaceName}.svc.cluster.local:4000`;
 
+        // Create LoadBalancer service for LiteLLM to expose it externally
+        // This allows users to call the LiteLLM API directly from outside the cluster
+        this.litellmService = new k8s.core.v1.Service(`${name}-litellm-lb`, {
+            metadata: {
+                name: "litellm-lb",
+                namespace: namespaceName,
+                labels: {
+                    "app.kubernetes.io/name": "litellm",
+                    "app.kubernetes.io/instance": this.litellm.name,
+                },
+                annotations: enableLoadBalancer ? {
+                    // Use AWS Load Balancer Controller (required for EKS Auto Mode)
+                    "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
+                    "service.beta.kubernetes.io/aws-load-balancer-type": "external",
+                    "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
+                } : undefined,
+            },
+            spec: {
+                type: enableLoadBalancer ? "LoadBalancer" : "ClusterIP",
+                selector: {
+                    "app.kubernetes.io/name": "litellm",
+                    "app.kubernetes.io/instance": this.litellm.name,
+                },
+                ports: [{
+                    port: 4000,
+                    targetPort: 4000,
+                    protocol: "TCP",
+                    name: "http",
+                }],
+            },
+        }, { parent: this, dependsOn: [this.litellm, this.namespace] });
+
+        // Set LiteLLM public URL from LoadBalancer
+        if (enableLoadBalancer) {
+            this.litellmPublicUrl = this.litellmService.status.apply(status => {
+                const ingress = status?.loadBalancer?.ingress?.[0];
+                if (ingress?.hostname) {
+                    return `http://${ingress.hostname}:4000`;
+                } else if (ingress?.ip) {
+                    return `http://${ingress.ip}:4000`;
+                }
+                return `http://litellm-lb.${namespaceName}.svc.cluster.local:4000`;
+            });
+        } else {
+            this.litellmPublicUrl = pulumi.interpolate`http://litellm-lb.${namespaceName}.svc.cluster.local:4000`;
+        }
+
         // Create JupyterHub API token secret if provided
         let jupyterhubApiSecret: k8s.core.v1.Secret | undefined;
         if (args.jupyterhubApiToken) {
@@ -198,6 +253,10 @@ export class MaaSComponent extends pulumi.ComponentResource {
             {
                 name: "LITELLM_API_BASE",
                 value: pulumi.interpolate`http://${this.litellm.name}.${namespaceName}.svc.cluster.local:4000`,
+            },
+            {
+                name: "LITELLM_PUBLIC_URL",
+                value: this.litellmPublicUrl,
             },
             {
                 name: "LITELLM_MASTER_KEY",
@@ -344,6 +403,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
             namespace: this.namespace.metadata.name,
             litellmReleaseName: this.litellmReleaseName,
             litellmServiceUrl: this.litellmServiceUrl,
+            litellmPublicUrl: this.litellmPublicUrl,
             appServiceUrl: this.appServiceUrl,
             publicUrl: this.publicUrl,
         });

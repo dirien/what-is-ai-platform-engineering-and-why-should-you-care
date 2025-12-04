@@ -1,7 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 
 const ModelDetailModal = ({ model, info, onClose }) => {
   const [copiedCode, setCopiedCode] = useState(false);
+  const [litellmUrl, setLitellmUrl] = useState('http://localhost:4000');
+
+  // Fetch the LiteLLM public URL for code examples
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await axios.get('/api/config');
+        if (response.data.litellmPublicUrl) {
+          setLitellmUrl(response.data.litellmPublicUrl);
+        }
+      } catch (err) {
+        console.error('Failed to fetch config:', err);
+      }
+    };
+    fetchConfig();
+  }, []);
 
   if (!model) return null;
 
@@ -49,12 +66,12 @@ const ModelDetailModal = ({ model, info, onClose }) => {
 
   const provider = getProvider();
 
-  // Generate Python usage example
+  // Generate Python usage example with the actual LiteLLM URL
   const pythonUsageExample = `import openai
 
 client = openai.OpenAI(
     api_key="your_api_key",
-    base_url="http://0.0.0.0:4000"  # Your LiteLLM Proxy URL
+    base_url="${litellmUrl}"
 )
 
 response = client.chat.completions.create(
