@@ -377,6 +377,18 @@ export interface LLMInferenceServiceArgs {
     };
 
     /**
+     * Startup probe configuration (inline override)
+     * Startup probes are ideal for slow-starting containers like LLMs
+     * The liveness probe won't run until the startup probe succeeds
+     */
+    startupProbe?: {
+        initialDelaySeconds?: number;
+        periodSeconds?: number;
+        timeoutSeconds?: number;
+        failureThreshold?: number;
+    };
+
+    /**
      * ServiceAccount name for the pod
      * Use this to provide access to secrets (e.g., HuggingFace token for gated models)
      */
@@ -435,7 +447,7 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
 
         // Build inline template overrides if any are provided
         const hasInlineOverrides = args.resources || args.tolerations || args.env ||
-                                   args.image || args.args || args.livenessProbe || args.serviceAccountName;
+                                   args.image || args.args || args.livenessProbe || args.startupProbe || args.serviceAccountName;
 
         if (hasInlineOverrides) {
             // Default resource configuration
@@ -456,12 +468,21 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
                 },
             ];
 
-            // Default liveness probe configuration
+            // Default liveness probe configuration (runs after startup probe succeeds)
             const livenessProbe = {
-                initialDelaySeconds: args.livenessProbe?.initialDelaySeconds ?? 120,
+                initialDelaySeconds: args.livenessProbe?.initialDelaySeconds ?? 0,
                 periodSeconds: args.livenessProbe?.periodSeconds ?? 30,
                 timeoutSeconds: args.livenessProbe?.timeoutSeconds ?? 30,
-                failureThreshold: args.livenessProbe?.failureThreshold ?? 5,
+                failureThreshold: args.livenessProbe?.failureThreshold ?? 3,
+            };
+
+            // Default startup probe configuration (ideal for slow-starting LLMs)
+            // Allows up to 10 minutes for model loading (failureThreshold * periodSeconds)
+            const startupProbe = {
+                initialDelaySeconds: args.startupProbe?.initialDelaySeconds ?? 30,
+                periodSeconds: args.startupProbe?.periodSeconds ?? 30,
+                timeoutSeconds: args.startupProbe?.timeoutSeconds ?? 30,
+                failureThreshold: args.startupProbe?.failureThreshold ?? 20,  // 20 * 30s = 10 min max
             };
 
             // Build container spec
@@ -489,6 +510,17 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
                     periodSeconds: livenessProbe.periodSeconds,
                     timeoutSeconds: livenessProbe.timeoutSeconds,
                     failureThreshold: livenessProbe.failureThreshold,
+                },
+                startupProbe: {
+                    httpGet: {
+                        path: "/health",
+                        port: 8000,
+                        scheme: "HTTP",
+                    },
+                    initialDelaySeconds: startupProbe.initialDelaySeconds,
+                    periodSeconds: startupProbe.periodSeconds,
+                    timeoutSeconds: startupProbe.timeoutSeconds,
+                    failureThreshold: startupProbe.failureThreshold,
                 },
             };
 

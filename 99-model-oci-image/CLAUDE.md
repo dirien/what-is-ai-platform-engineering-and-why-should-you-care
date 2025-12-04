@@ -110,12 +110,13 @@ pulumi env run pulumi-idp/auth -- aws codebuild start-build \
 
 ## Current Models
 
-| Model | Compute Type | ECR Repository |
-|-------|-------------|----------------|
-| meta-llama/Meta-Llama-3-8B-Instruct | SMALL | kserve-models/meta-llama-meta-llama-3-8b-instruct |
-| Qwen/Qwen3-8B | SMALL | kserve-models/qwen-qwen3-8b |
-| Qwen/Qwen2.5-7B-Instruct | SMALL | kserve-models/qwen-qwen2-5-7b-instruct |
-| openai/gpt-oss-20b | LARGE | kserve-models/openai-gpt-oss-20b |
+| Model | Compute Type | ECR Repository | Notes |
+|-------|-------------|----------------|-------|
+| meta-llama/Meta-Llama-3-8B-Instruct | SMALL | kserve-models/meta-llama-meta-llama-3-8b-instruct | 8K native context |
+| Qwen/Qwen3-8B | SMALL | kserve-models/qwen-qwen3-8b | 20K max on A10G (KV cache limit) |
+| Qwen/Qwen2.5-7B-Instruct | SMALL | kserve-models/qwen-qwen2-5-7b-instruct | 32K native context |
+
+**Note:** gpt-oss-20b was removed as it requires a special vLLM build (0.10.1+gptoss) and Hopper/Blackwell GPUs (not compatible with A10G/Ampere architecture).
 
 ## KServe Usage
 
