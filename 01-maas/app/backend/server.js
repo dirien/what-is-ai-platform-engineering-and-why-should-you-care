@@ -513,30 +513,21 @@ app.get('/api/notebooks', async (req, res) => {
     // Extract notebook servers from all users
     const notebooks = [];
     for (const user of response.data) {
-      // Default server
-      if (user.server) {
-        notebooks.push({
-          name: user.name,
-          user: user.name,
-          url: user.server,
-          started: user.last_activity,
-          ready: true,
-          pending: null
-        });
-      }
-      // Named servers (skip empty-string key as it's the same as user.server)
-      if (user.servers) {
+      // JupyterHub API returns servers as an object keyed by server name
+      // Default server has empty string key ""
+      if (user.servers && typeof user.servers === 'object') {
         for (const [serverName, server] of Object.entries(user.servers)) {
-          // Skip the default server (empty string) - already added above via user.server
-          if (serverName === '') continue;
-          notebooks.push({
-            name: serverName || user.name,
-            user: user.name,
-            url: server.url,
-            started: server.started,
-            ready: server.ready,
-            pending: server.pending
-          });
+          // Only include servers that exist (have some data)
+          if (server && typeof server === 'object') {
+            notebooks.push({
+              name: serverName === '' ? user.name : serverName,
+              user: user.name,
+              url: server.url || `/user/${user.name}/`,
+              started: server.started || server.last_activity,
+              ready: server.ready === true,
+              pending: server.pending || null
+            });
+          }
         }
       }
     }
