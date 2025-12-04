@@ -420,11 +420,18 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
         cpuRequest: "2",
         memoryRequest: "16Gi",
     },
-    // vLLM args for A10G GPU (24GB VRAM)
+    // vLLM args for A10G GPU (24GB VRAM) - 32K native context
     args: [
-        "--max_model_len=8192",
+        "--max_model_len=32768",
         "--gpu_memory_utilization=0.9",
     ],
+    // Startup probe: 32K context needs ~5 min for model load + CUDA graph compilation
+    startupProbe: {
+        initialDelaySeconds: 60,
+        periodSeconds: 30,
+        timeoutSeconds: 30,
+        failureThreshold: 20,  // 60s + 20*30s = 11 min max
+    },
 }, {provider: k8sProvider, dependsOn: [kserve]});
 
 
@@ -444,12 +451,50 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
         cpuRequest: "2",
         memoryRequest: "16Gi",
     },
+    // vLLM args for A10G GPU (24GB VRAM) - 8K native context
     args: [
         "--max_model_len=8192",
         "--gpu_memory_utilization=0.9",
     ],
+    // Startup probe: 8K context is faster, ~3 min for model load
+    startupProbe: {
+        initialDelaySeconds: 60,
+        periodSeconds: 30,
+        timeoutSeconds: 30,
+        failureThreshold: 10,  // 60s + 10*30s = 6 min max
+    },
 }, {provider: k8sProvider, dependsOn: [kserve]});
 
+// Deploy Qwen3-8B using KServe LLMInferenceService
+// Uses OCI storage - model image is pre-cached on GPU nodes via EBS snapshot
+// Note: Qwen3-8B (8.2B params) is larger than Qwen2.5-7B, limiting KV cache to ~20K context on A10G
+const qwen3Model = new LLMInferenceServiceComponent("qwen3-8b", {
+    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen3-8b:latest",
+    modelName: "Qwen/Qwen3-8B",
+    storageType: "oci",
+    namespace: "default",
+    replicas: 1,
+    resources: {
+        cpuLimit: "4",
+        memoryLimit: "32Gi",
+        gpuCount: 1,
+        cpuRequest: "2",
+        memoryRequest: "16Gi",
+    },
+    // vLLM args for A10G GPU (24GB VRAM) - 20K context (limited by KV cache memory)
+    // Native 32K requires ~4.5GB KV cache but only ~3.2GB available after model load
+    args: [
+        "--max_model_len=20480",
+        "--gpu_memory_utilization=0.9",
+    ],
+    // Startup probe: ~5 min for model load + CUDA graph compilation
+    startupProbe: {
+        initialDelaySeconds: 60,
+        periodSeconds: 30,
+        timeoutSeconds: 30,
+        failureThreshold: 20,  // 60s + 20*30s = 11 min max
+    },
+}, {provider: k8sProvider, dependsOn: [kserve]});
 
 export const escName = pulumi.interpolate`${environmentResource.project}/${environmentResource.name}`
 export const kubeconfig = pulumi.secret(cluster.kubeconfigJson)

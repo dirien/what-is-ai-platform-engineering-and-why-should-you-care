@@ -102,6 +102,13 @@ After `pulumi up`, you'll get:
 |------------|-------------|----------|
 | `appName` | Application name prefix | No (default: maas) |
 
+## Cost Calculation
+
+See [COST_CALCULATION.md](./COST_CALCULATION.md) for the methodology used to calculate per-token costs for self-hosted models. This includes:
+- Infrastructure cost formulas based on GPU instance hourly rates
+- Input/output token cost differentiation (prefill vs decode phases)
+- Current model costs for LiteLLM chargeback configuration
+
 ## Skills
 
 When working with this Pulumi TypeScript project, use `pulumi-skills:pulumi-typescript` for best practices.

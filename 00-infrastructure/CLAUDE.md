@@ -100,22 +100,39 @@ const kserve = new KServeComponent("kserve", {
 Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Located in `llmInferenceServiceComponent.ts`.
 
 **Required:**
-- `modelUri: string` - Model URI (e.g., `"hf://Qwen/Qwen2.5-7B-Instruct"`)
+- `modelUri: string` - Model URI (e.g., `"oci://...ecr.../kserve-models/qwen-qwen2-5-7b-instruct:latest"` or `"hf://Qwen/Qwen2.5-7B-Instruct"`)
 - `modelName: string` - Model name for vLLM
 
 **Optional:**
+- `storageType?: "oci" | "hf"` - Storage type (`"oci"` for Modelcars, `"hf"` for HuggingFace)
 - `namespace?: string` - K8s namespace (default: `"default"`)
 - `replicas?: number` - Number of replicas (default: `1`)
 - `resources?: LLMResourceConfig` - CPU, memory, GPU resources
-- `args?: string[]` - Additional vLLM arguments
+- `args?: string[]` - Additional vLLM arguments (e.g., `--max_model_len`, `--gpu_memory_utilization`)
 - `env?: EnvVar[]` - Environment variables
 - `tolerations?: Toleration[]` - Pod tolerations
+- `startupProbe?: ProbeConfig` - Startup probe for slow-starting models (recommended for large context lengths)
+- `livenessProbe?: ProbeConfig` - Liveness probe configuration
+
+**Startup Probe (recommended for LLMs):**
+
+LLMs can take 5-10+ minutes to load depending on model size and context length. Use `startupProbe` to prevent premature pod restarts:
+
+```typescript
+startupProbe: {
+    initialDelaySeconds: 60,    // Wait before first probe
+    periodSeconds: 30,          // Probe interval
+    timeoutSeconds: 30,         // Probe timeout
+    failureThreshold: 20,       // Max failures (20*30s = 10 min)
+}
+```
 
 **Example:**
 ```typescript
 const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
-    modelUri: "hf://Qwen/Qwen2.5-7B-Instruct",
+    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen2-5-7b-instruct:latest",
     modelName: "Qwen/Qwen2.5-7B-Instruct",
+    storageType: "oci",
     namespace: "default",
     replicas: 1,
     resources: {
@@ -126,11 +143,25 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
         memoryRequest: "16Gi",
     },
     args: [
-        "--max_model_len=8192",
+        "--max_model_len=32768",  // Native context length for Qwen2.5
         "--gpu_memory_utilization=0.9",
     ],
+    startupProbe: {
+        initialDelaySeconds: 60,
+        periodSeconds: 30,
+        timeoutSeconds: 30,
+        failureThreshold: 20,
+    },
 }, { provider: kuebeconfigProvider });
 ```
+
+**Context Length Guidelines for A10G (24GB VRAM):**
+
+| Model | Native Context | Recommended `--max_model_len` |
+|-------|----------------|-------------------------------|
+| Qwen2.5-7B-Instruct | 32K | 32768 (fits on A10G) |
+| Llama-3-8B-Instruct | 8K | 8192 |
+| Qwen3-8B | 32K | 20480 (limited by KV cache memory) |
 
 ### ObservabilityComponent
 
