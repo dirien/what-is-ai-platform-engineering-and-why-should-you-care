@@ -173,7 +173,13 @@ const FinOpsDashboard = () => {
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByDayMap.set(date, existing);
       });
-      const spendByDay = Array.from(spendByDayMap.values()).slice(-30);
+      const spendByDay = Array.from(spendByDayMap.values())
+        .sort((a, b) => {
+          const dateA = new Date(a.date + ', ' + new Date().getFullYear());
+          const dateB = new Date(b.date + ', ' + new Date().getFullYear());
+          return dateA - dateB;
+        })
+        .slice(-30);
 
       // Group spend by model (only published models)
       // Use model_group when available (LiteLLM includes this field)
