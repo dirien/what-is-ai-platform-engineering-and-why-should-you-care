@@ -141,7 +141,7 @@ const jupyterhub = new JupyterHubComponent("jupyterhub", {
 const maas = new MaaSComponent("maas", {
     namespace: "maas",
     imageRef: image.ref,
-    litellmChartVersion: "0.1.825",
+    litellmChartVersion: "0.1.830",
     litellmUsername: "admin",
     litellmPassword: "admin",
     jupyterhubApiUrl: "http://hub.jupyterhub.svc.cluster.local:8081",

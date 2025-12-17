@@ -252,6 +252,31 @@ export class KServeComponent extends pulumi.ComponentResource {
             namespace: this.kserveNamespace.metadata.name,
         }, { parent: this, dependsOn: [this.kserve] });
 
+        // Patch the inferenceservice-config ConfigMap ownership annotations BEFORE installing llmisvc-resources.
+        // Both kserve and llmisvc-resources charts create the same ConfigMap, causing a Helm ownership conflict.
+        // This patch transfers ownership from the "kserve" release to the "llmisvc-resources" release.
+        const configMapOwnershipPatch = new k8s.core.v1.ConfigMapPatch(
+            `${name}-configmap-ownership-patch`,
+            {
+                metadata: {
+                    name: "inferenceservice-config",
+                    namespace: this.kserveNamespace.metadata.name,
+                    annotations: {
+                        "pulumi.com/patchForce": "true",
+                        "meta.helm.sh/release-name": "llmisvc-resources",
+                        "meta.helm.sh/release-namespace": "kserve",
+                    },
+                    labels: {
+                        "app.kubernetes.io/managed-by": "Helm",
+                    },
+                },
+            },
+            {
+                parent: this,
+                dependsOn: [this.kserve],
+            }
+        );
+
         // Install LLMInferenceService resources (controller and runtimes)
         this.llmisvResources = new k8s.helm.v3.Release(`${name}-llmisvc-resources`, {
             name: "llmisvc-resources",
@@ -277,7 +302,7 @@ export class KServeComponent extends pulumi.ComponentResource {
                     },
                 },
             },
-        }, { parent: this, dependsOn: [this.llmisvCrd] });
+        }, { parent: this, dependsOn: [this.llmisvCrd, configMapOwnershipPatch] });
 
         // Patch the inferenceservice-config ConfigMap with storage initializer settings
         // This overrides the defaults set by the llmisvc-resources Helm chart

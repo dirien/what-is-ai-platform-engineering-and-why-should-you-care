@@ -70,6 +70,27 @@ const clusterSgTag = new aws.ec2.Tag("eks-cluster-sg-karpenter-tag", {
     value: clusterName,
 });
 
+// Security group rules for NLB health checks
+// NLB with IP target type sends health checks from IPs within the VPC CIDR
+// These rules allow traffic from the VPC to reach pods on specific ports
+const nlbHealthCheckPorts = [
+    {port: 3001, description: "MaaS frontend"},
+    {port: 4000, description: "LiteLLM API"},
+    {port: 8000, description: "JupyterHub proxy"},
+];
+
+nlbHealthCheckPorts.forEach(({port, description}) => {
+    new aws.ec2.SecurityGroupRule(`nlb-health-check-${port}`, {
+        type: "ingress",
+        fromPort: port,
+        toPort: port,
+        protocol: "tcp",
+        cidrBlocks: [eksVpc.vpc.cidrBlock],
+        securityGroupId: cluster.eksCluster.vpcConfig.clusterSecurityGroupId,
+        description: `Allow NLB health checks for ${description}`,
+    });
+});
+
 // IAM role for managed node group
 const nodeRole = new aws.iam.Role("system-node-role", {
     assumeRolePolicy: JSON.stringify({
