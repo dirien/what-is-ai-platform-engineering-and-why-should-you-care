@@ -16,7 +16,7 @@ This folder contains the Model-as-a-Service (MaaS) platform for the AI Platform 
     - Team management CRUD endpoints
     - Budget alert webhook receiver
     - Server-side spend reporting via `/global/spend/report`
-  - `Dockerfile` - Multi-stage Docker build (Node.js 22 Alpine)
+  - `Dockerfile` - Multi-stage Docker build
 - `infra/` - Pulumi infrastructure for ECR, Docker build, RDS, MaaS and JupyterHub deployment
   - `src/components/` - Pulumi component resources (EcrRepositoryComponent, MaaSComponent, JupyterHubComponent)
 - `notebook-image/` - Custom JupyterHub notebook Docker image (optional)
@@ -54,7 +54,7 @@ The `infra/` folder uses Pulumi TypeScript with components in `infra/src/compone
 - **MaaSComponent** (`src/components/maasComponent.ts`) - Bundles LiteLLM and the MaaS frontend app:
   - Deploys to dedicated `maas` namespace
   - LiteLLM API gateway via Helm chart (v1.81.12-stable)
-  - **RDS PostgreSQL** (db.t4g.micro, PostgreSQL 16.12) for LiteLLM persistence with automated backups, encryption, and final snapshot protection
+  - **RDS PostgreSQL** (db.t4g.micro, PostgreSQL 16.4) for LiteLLM persistence with automated backups, encryption, and final snapshot protection
   - MaaS frontend app Deployment and Service
   - Internet-facing AWS NLB via Load Balancer Controller
   - JupyterHub API token secret management
@@ -80,7 +80,7 @@ The stack imports the kubeconfig from the 00-infrastructure ESC environment:
 ```yaml
 # Pulumi.dev.yaml
 environment:
-  - self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
+  - self-service-ai-application-platforms/ai-platform-demo-cluster
 ```
 
 This provides:
@@ -110,7 +110,6 @@ After `pulumi up`, you'll get:
 | Config Key | Description | Required |
 |------------|-------------|----------|
 | `appName` | Application name prefix | No (default: maas) |
-| `litellmMasterKey` | LiteLLM master key for admin API access (secret) | Yes |
 | `infra:vpcId` | VPC ID for RDS subnet group | Yes |
 | `infra:privateSubnetIds` | Private subnet IDs for RDS (JSON array) | Yes |
 | `infra:clusterSecurityGroupId` | EKS cluster security group ID for RDS ingress | Yes |
