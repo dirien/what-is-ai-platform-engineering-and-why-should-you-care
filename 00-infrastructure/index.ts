@@ -469,6 +469,8 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     args: [
         "--max_model_len=32768",
         "--gpu_memory_utilization=0.9",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser=hermes",
     ],
     // Startup probe: allow 30 min for cold EBS lazy loading + model load + torch.compile + CUDA graph warmup
     startupProbe: {
@@ -500,6 +502,8 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
     args: [
         "--max_model_len=8192",
         "--gpu_memory_utilization=0.9",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser=hermes",
     ],
     // Startup probe: allow 30 min for cold EBS lazy loading + model load + torch.compile + CUDA graph warmup
     startupProbe: {
@@ -531,6 +535,8 @@ const qwen3Model = new LLMInferenceServiceComponent("qwen3-8b", {
     args: [
         "--max_model_len=20480",
         "--gpu_memory_utilization=0.9",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser=hermes",
     ],
     // Startup probe: allow 30 min for cold EBS lazy loading + model load + torch.compile + CUDA graph warmup
     startupProbe: {

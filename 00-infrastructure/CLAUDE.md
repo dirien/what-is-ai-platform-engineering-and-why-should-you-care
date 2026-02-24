@@ -109,7 +109,7 @@ Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Loca
 - `namespace?: string` - K8s namespace (default: `"default"`)
 - `replicas?: number` - Number of replicas (default: `1`)
 - `resources?: LLMResourceConfig` - CPU, memory, GPU resources
-- `args?: string[]` - Additional vLLM arguments (e.g., `--max_model_len`, `--gpu_memory_utilization`)
+- `args?: string[]` - Additional vLLM arguments (e.g., `--max_model_len`, `--gpu_memory_utilization`, `--enable-auto-tool-choice`, `--tool-call-parser`)
 - `env?: EnvVar[]` - Environment variables
 - `tolerations?: Toleration[]` - Pod tolerations
 - `startupProbe?: ProbeConfig` - Startup probe for slow-starting models (recommended for large context lengths)
@@ -146,6 +146,8 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     args: [
         "--max_model_len=32768",  // Native context length for Qwen2.5
         "--gpu_memory_utilization=0.9",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser=hermes",
     ],
     startupProbe: {
         initialDelaySeconds: 60,

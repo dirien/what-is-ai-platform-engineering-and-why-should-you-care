@@ -1,5 +1,7 @@
 environment:
-- pulumi-idp/auth
+  - pulumi-idp/auth
 config:
   aws:region: us-east-1
-  clusterName: demo-ai-idp-cluster
+  00-infrastructure:clusterName: demo-ai-idp-cluster
+  00-infrastructure:gpuSnapshotId: snap-0bcdcfaaac7f56e66
+  00-infrastructure:ecrBaseUrl: 052848974346.dkr.ecr.us-east-1.amazonaws.com

@@ -150,6 +150,7 @@ const maas = new MaaSComponent("maas", {
     litellmChartVersion: "1.81.12-stable",
     litellmUsername: "admin",
     litellmPassword: "admin",
+    litellmMasterKey: config.requireSecret("litellmMasterKey"),
     jupyterhubApiUrl: "http://hub.jupyterhub.svc.cluster.local:8081",
     jupyterhubPublicUrl: jupyterhub.publicUrl,
     jupyterhubApiToken: jupyterhub.apiToken,

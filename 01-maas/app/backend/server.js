@@ -792,7 +792,7 @@ app.get('/api/notebooks/status', async (req, res) => {
 });
 
 // Catch-all route - serve index.html for client-side routing (must be after all API routes)
-app.get('*', (req, res) => {
+app.get('{*path}', (req, res) => {
   res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
 
