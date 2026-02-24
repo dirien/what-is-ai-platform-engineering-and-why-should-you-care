@@ -4,7 +4,7 @@ This repository demonstrates AI platform engineering patterns with Pulumi and EK
 
 ## Project Structure
 
-- [00-infrastructure](./00-infrastructure/CLAUDE.md) - EKS Auto Mode cluster with Karpenter GPU NodePools, KServe, and LLM deployments
+- [00-infrastructure](./00-infrastructure/CLAUDE.md) - EKS cluster with Karpenter GPU NodePools, KServe, and LLM deployments
 - `01-maas/` - Model-as-a-Service application with LiteLLM proxy
 - [99-model-oci-image](./99-model-oci-image/CLAUDE.md) - OCI image builder for KServe Modelcars (faster model loading)
 

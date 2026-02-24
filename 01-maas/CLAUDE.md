@@ -80,7 +80,7 @@ The stack imports the kubeconfig from the 00-infrastructure ESC environment:
 ```yaml
 # Pulumi.dev.yaml
 environment:
-  - self-service-ai-application-platforms/ai-platform-demo-cluster
+  - self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
 ```
 
 This provides:

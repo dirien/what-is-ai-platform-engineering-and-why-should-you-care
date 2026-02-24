@@ -41,7 +41,7 @@ const gpuPool = new KarpenterNodePoolComponent("gpu-standard", {
         consolidationPolicy: "WhenEmpty",
         consolidateAfter: "1m",
     },
-}, { provider: kuebeconfigProvider });
+}, { provider: k8sProvider });
 ```
 
 ### KServeComponent
@@ -93,7 +93,7 @@ const kserve = new KServeComponent("kserve", {
         memoryRequest: "512Mi",
         memoryLimit: "2Gi",
     },
-}, { provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool] });
+}, { provider: k8sProvider, dependsOn: [gpuStandardNodePool] });
 ```
 
 ### LLMInferenceServiceComponent
@@ -117,14 +117,14 @@ Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Loca
 
 **Startup Probe (recommended for LLMs):**
 
-LLMs can take 5-10+ minutes to load depending on model size and context length. Use `startupProbe` to prevent premature pod restarts:
+LLMs can take 10-30+ minutes to load on cold EBS snapshot nodes (lazy block initialization + model loading + torch.compile + CUDA graph warmup). Use `startupProbe` to prevent premature pod restarts:
 
 ```typescript
 startupProbe: {
     initialDelaySeconds: 60,    // Wait before first probe
     periodSeconds: 30,          // Probe interval
     timeoutSeconds: 30,         // Probe timeout
-    failureThreshold: 20,       // Max failures (20*30s = 10 min)
+    failureThreshold: 60,       // Max failures (60*30s = 30 min)
 }
 ```
 
@@ -151,9 +151,9 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
         initialDelaySeconds: 60,
         periodSeconds: 30,
         timeoutSeconds: 30,
-        failureThreshold: 20,
+        failureThreshold: 60,
     },
-}, { provider: kuebeconfigProvider });
+}, { provider: k8sProvider });
 ```
 
 **Context Length Guidelines for A10G (24GB VRAM):**
@@ -191,7 +191,7 @@ const observability = new ObservabilityComponent("observability", {
     storageClassName: "gp3",
     metricsServer: { enabled: true, version: "3.13.0" },
     prometheusStack: {
-        version: "79.9.0",
+        version: "82.2.1",
         alertmanagerEnabled: false,
         storageSize: "50Gi",
     },
@@ -202,7 +202,7 @@ const observability = new ObservabilityComponent("observability", {
     },
     dcgmExporter: {
         enabled: true,
-        version: "4.6.0",
+        version: "4.8.1",
         // Use Karpenter GPU node label to only schedule on GPU nodes
         nodeSelector: { "karpenter.k8s.aws/instance-gpu-count": "1" },
         tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
@@ -295,7 +295,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 Three NodePools are configured via Karpenter:
 
-- **general**: `m6i.large`, `m6i.xlarge`, etc. - For general workloads (observability, KServe controllers)
+- **general**: `m6i.large`, `m6i.xlarge`, `m7i.large`, `m7i.xlarge`, etc. (spot + on-demand) - For general workloads (observability, KServe controllers)
 - **gpu-standard**: `g5.xlarge`, `g5.2xlarge`, `g5.4xlarge` (A10G 24GB) - For 7B-13B models
 - **gpu-a100** (commented): `p4de.24xlarge` (8x A100 80GB) - For large MoE models (480B+)
 
