@@ -51,7 +51,7 @@ export interface JupyterHubComponentArgs {
     namespace?: string;
     /**
      * Helm chart version
-     * @default "4.3.1"
+     * @default "4.3.2"
      */
     chartVersion?: string;
     /**
@@ -98,21 +98,74 @@ export interface JupyterHubComponentArgs {
      * @default false (ClusterIP)
      */
     enableLoadBalancer?: boolean;
+
+    /**
+     * Tags to apply to load balancer AWS resources
+     */
+    tags?: pulumi.Input<Record<string, pulumi.Input<string>>>;
+}
+
+/**
+ * KubeSpawner override for a JupyterHub profile
+ */
+interface KubespawnerOverride {
+    cpu_limit: number;
+    cpu_guarantee: number;
+    mem_limit: string;
+    mem_guarantee: string;
+    extra_resource_limits?: Record<string, string>;
+    extra_resource_guarantees?: Record<string, string>;
+    tolerations?: { key: string; operator: string; effect: string }[];
+}
+
+/**
+ * JupyterHub singleuser config
+ */
+interface SingleuserConfig {
+    profileList: {
+        display_name: string;
+        description: string;
+        default: boolean;
+        kubespawner_override: KubespawnerOverride;
+    }[];
+    storage: {
+        capacity: string;
+        dynamic: { storageClass: string };
+    };
+    extraEnv: Record<string, pulumi.Input<string>>;
+    image: { name: string; tag: string };
+    defaultUrl: string;
+    cmd: null;
+}
+
+/**
+ * JupyterHub hub config
+ */
+interface HubConfig {
+    config: {
+        JupyterHub: { admin_access: boolean };
+        Authenticator: { admin_users: string[] };
+    };
+    services: Record<string, { api_token: pulumi.Output<string>; admin: boolean }>;
 }
 
 export class JupyterHubComponent extends pulumi.ComponentResource {
     /**
-     * The JupyterHub Helm release
+     * The JupyterHub Helm release (internal implementation detail)
      */
-    public readonly release: k8s.helm.v3.Release;
+    private readonly release: k8s.helm.v3.Release;
     /**
-     * The namespace where JupyterHub is deployed
+     * The namespace where JupyterHub is deployed (internal implementation detail)
      */
-    public readonly namespace: k8s.core.v1.Namespace;
+    private readonly namespace: k8s.core.v1.Namespace;
     /**
-     * The proxy secret token
+     * The proxy secret token (internal implementation detail)
      */
-    public readonly proxySecretToken: pulumi.Output<string>;
+    private readonly proxySecretToken: pulumi.Output<string>;
+    /**
+     * The namespace name where JupyterHub is deployed
+     */
+    public readonly namespaceName: pulumi.Output<string>;
     /**
      * The API token for external services to access JupyterHub API
      */
@@ -134,10 +187,15 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
         super("maas:jupyterhub:JupyterHubComponent", name, args, opts);
 
         const namespaceName = args.namespace || "jupyterhub";
-        const chartVersion = args.chartVersion || "4.3.2-0.dev.git.7211.hba50290a";
+        const chartVersion = args.chartVersion || "4.3.2";
         const storageSize = args.storageSize || "10Gi";
         const idleTimeout = args.idleTimeout || 3600;
         const enableLoadBalancer = args.enableLoadBalancer ?? false;
+        const loadBalancerAdditionalTags = pulumi.output(args.tags).apply(resourceTags =>
+            Object.entries(resourceTags || {})
+                .map(([key, value]) => `${key}=${value}`)
+                .join(",")
+        );
 
         // Create namespace for JupyterHub
         this.namespace = new k8s.core.v1.Namespace(`${name}-namespace`, {
@@ -228,32 +286,30 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
 
         // Convert profiles to JupyterHub format
         const profileList = defaultProfiles.map(profile => {
-            const kubespawnerOverride: any = {
+            const kubespawnerOverride: KubespawnerOverride = {
                 // CPU values must be floats (e.g., 0.5, 2.0)
                 cpu_limit: parseCpu(profile.cpuLimit || "2"),
                 cpu_guarantee: parseCpu(profile.cpuRequest || "0.5"),
                 // Memory values must use K, M, G, T suffixes (not Ki, Mi, Gi, Ti)
                 mem_limit: parseMemory(profile.memoryLimit || "4G"),
                 mem_guarantee: parseMemory(profile.memoryRequest || "1G"),
-            };
-
-            // Add GPU configuration if needed
-            if (profile.gpuCount && profile.gpuCount > 0) {
-                kubespawnerOverride.extra_resource_limits = {
-                    "nvidia.com/gpu": profile.gpuCount.toString(),
-                };
-                kubespawnerOverride.extra_resource_guarantees = {
-                    "nvidia.com/gpu": profile.gpuCount.toString(),
-                };
-                // Add toleration for GPU nodes
-                kubespawnerOverride.tolerations = [
-                    {
-                        key: "nvidia.com/gpu",
-                        operator: "Exists",
-                        effect: "NoSchedule",
+                // Add GPU configuration if needed
+                ...(profile.gpuCount && profile.gpuCount > 0 ? {
+                    extra_resource_limits: {
+                        "nvidia.com/gpu": profile.gpuCount.toString(),
                     },
-                ];
-            }
+                    extra_resource_guarantees: {
+                        "nvidia.com/gpu": profile.gpuCount.toString(),
+                    },
+                    tolerations: [
+                        {
+                            key: "nvidia.com/gpu",
+                            operator: "Exists",
+                            effect: "NoSchedule",
+                        },
+                    ],
+                } : {}),
+            };
 
             return {
                 display_name: profile.displayName,
@@ -264,7 +320,7 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
         });
 
         // Build singleuser configuration
-        const singleuserConfig: any = {
+        const singleuserConfig: SingleuserConfig = {
             profileList: profileList,
             storage: {
                 capacity: storageSize,
@@ -294,7 +350,7 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
         };
 
         // Build hub configuration with API service for external access
-        const hubConfig: any = {
+        const hubConfig: HubConfig = {
             config: {
                 JupyterHub: {
                     admin_access: args.enableAdminUI !== false,
@@ -337,6 +393,9 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
                             "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
                             "service.beta.kubernetes.io/aws-load-balancer-type": "external",
                             "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
+                            ...(args.tags ? {
+                                "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags": loadBalancerAdditionalTags,
+                            } : {}),
                         } : {},
                     },
                     // Proxy container resources
@@ -403,6 +462,7 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
             dependsOn: [this.namespace],
         });
 
+        this.namespaceName = this.namespace.metadata.apply(m => m.name!);
         this.hubServiceName = pulumi.interpolate`hub`;
         this.proxyServiceName = pulumi.interpolate`proxy-public`;
 
@@ -431,8 +491,7 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
         }
 
         this.registerOutputs({
-            namespace: this.namespace.metadata.name,
-            proxySecretToken: this.proxySecretToken,
+            namespaceName: this.namespaceName,
             apiToken: this.apiToken,
             hubServiceName: this.hubServiceName,
             proxyServiceName: this.proxyServiceName,

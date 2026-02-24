@@ -207,6 +207,16 @@ Self-hosted models are cost-competitive for:
 - Customization/fine-tuning needs
 - Predictable budgeting
 
+## Persistence and Chargeback
+
+Spend data is persisted in **RDS PostgreSQL** (not the bundled Bitnami chart), ensuring:
+- Automated backups (7-day retention)
+- Encryption at rest
+- Final snapshot protection on destroy
+- Data survives `pulumi destroy` of the K8s resources
+
+The FinOps dashboard uses LiteLLM's `/global/spend/report` API for server-side aggregation with date filtering and `group_by` support (by `api_key`, `team`, or model). Teams can be assigned budgets with enforcement via webhook alerts.
+
 ## Future Improvements
 
 1. **Actual throughput measurement** - Implement metrics collection from vLLM to get real throughput data

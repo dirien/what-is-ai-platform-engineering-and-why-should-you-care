@@ -23,7 +23,7 @@ export interface MetricsServerConfig {
 export interface PrometheusStackConfig {
     /**
      * Helm chart version
-     * @default "79.9.0"
+     * @default "82.2.1"
      */
     version?: pulumi.Input<string>;
     /**
@@ -83,7 +83,7 @@ export interface DcgmExporterConfig {
     enabled?: pulumi.Input<boolean>;
     /**
      * Helm chart version
-     * @default "4.6.0"
+     * @default "4.8.1"
      */
     version?: pulumi.Input<string>;
     /**
@@ -139,6 +139,46 @@ export interface ObservabilityComponentArgs {
 }
 
 /**
+ * Grafana dashboard provider definition
+ */
+interface GrafanaDashboardProvider {
+    name: string;
+    orgId: number;
+    folder: string;
+    type: string;
+    disableDeletion: boolean;
+    editable: boolean;
+    options: { path: string };
+}
+
+/**
+ * Grafana dashboard reference from grafana.com
+ */
+interface GrafanaDashboardRef {
+    gnetId: number;
+    revision: number;
+    datasource: string;
+}
+
+/**
+ * DCGM Exporter Helm values
+ */
+interface DcgmHelmValues {
+    serviceMonitor: {
+        enabled: boolean;
+        interval: string;
+        honorLabels: boolean;
+        additionalLabels: Record<string, pulumi.Output<string>>;
+    };
+    resources: {
+        requests: { cpu: string; memory: pulumi.Input<string> };
+        limits: { cpu: string; memory: pulumi.Input<string> };
+    };
+    tolerations: pulumi.Input<k8s.types.input.core.v1.Toleration[]>;
+    nodeSelector?: pulumi.Input<Record<string, pulumi.Input<string>>>;
+}
+
+/**
  * ObservabilityComponent deploys a complete observability stack including:
  * - Metrics Server for Kubernetes metrics (HPA support)
  * - kube-prometheus-stack (Prometheus, Grafana, node-exporter, kube-state-metrics)
@@ -151,15 +191,15 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
     /**
      * The metrics server Helm release
      */
-    public readonly metricsServer?: k8s.helm.v3.Release;
+    private metricsServer?: k8s.helm.v3.Release;
     /**
      * The kube-prometheus-stack Helm release
      */
-    public readonly kubePrometheusStack: k8s.helm.v3.Release;
+    private readonly kubePrometheusStack: k8s.helm.v3.Release;
     /**
      * The DCGM exporter Helm release
      */
-    public readonly dcgmExporter?: k8s.helm.v3.Release;
+    private dcgmExporter?: k8s.helm.v3.Release;
     /**
      * The namespace where observability components are deployed
      */
@@ -182,7 +222,7 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
         };
 
         const prometheusStackConfig = {
-            version: args.prometheusStack?.version ?? "79.9.0",
+            version: args.prometheusStack?.version ?? "82.2.1",
             alertmanagerEnabled: args.prometheusStack?.alertmanagerEnabled ?? false,
             storageSize: args.prometheusStack?.storageSize ?? "50Gi",
         };
@@ -195,7 +235,7 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
 
         const dcgmExporterConfig = {
             enabled: args.dcgmExporter?.enabled ?? true,
-            version: args.dcgmExporter?.version ?? "4.6.0",
+            version: args.dcgmExporter?.version ?? "4.8.1",
             memoryRequest: args.dcgmExporter?.memoryRequest ?? "512Mi",
             memoryLimit: args.dcgmExporter?.memoryLimit ?? "1Gi",
         };
@@ -218,26 +258,21 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
         }
 
         // Build Grafana dashboard providers and dashboards
-        const dashboardProviders: any = {
-            "dashboardproviders.yaml": {
-                apiVersion: 1,
-                providers: [
-                    {
-                        name: "nvidia-dcgm",
-                        orgId: 1,
-                        folder: "NVIDIA",
-                        type: "file",
-                        disableDeletion: false,
-                        editable: true,
-                        options: {
-                            path: "/var/lib/grafana/dashboards/nvidia-dcgm",
-                        },
-                    },
-                ],
+        const providers: GrafanaDashboardProvider[] = [
+            {
+                name: "nvidia-dcgm",
+                orgId: 1,
+                folder: "NVIDIA",
+                type: "file",
+                disableDeletion: false,
+                editable: true,
+                options: {
+                    path: "/var/lib/grafana/dashboards/nvidia-dcgm",
+                },
             },
-        };
+        ];
 
-        const dashboards: any = {
+        const dashboards: Record<string, Record<string, GrafanaDashboardRef> | pulumi.Input<Record<string, { gnetId: number; revision: number; datasource: string }>>> = {
             "nvidia-dcgm": {
                 "nvidia-dcgm-exporter": {
                     gnetId: 12239,
@@ -249,7 +284,7 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
 
         // Add additional dashboards if provided
         if (args.grafana?.additionalDashboards) {
-            dashboardProviders["dashboardproviders.yaml"].providers.push({
+            providers.push({
                 name: "custom",
                 orgId: 1,
                 folder: "Custom",
@@ -262,6 +297,13 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
             });
             dashboards["custom"] = args.grafana.additionalDashboards;
         }
+
+        const dashboardProviders = {
+            "dashboardproviders.yaml": {
+                apiVersion: 1,
+                providers,
+            },
+        };
 
         // Deploy kube-prometheus-stack
         this.kubePrometheusStack = new k8s.helm.v3.Release(`${name}-kube-prometheus-stack`, {
@@ -331,7 +373,15 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
 
         // Deploy DCGM Exporter for GPU metrics
         if (dcgmExporterConfig.enabled) {
-            const dcgmValues: any = {
+            const tolerations = args.dcgmExporter?.tolerations ?? [
+                {
+                    key: "nvidia.com/gpu",
+                    operator: "Exists",
+                    effect: "NoSchedule",
+                },
+            ];
+
+            const dcgmValues: DcgmHelmValues = {
                 serviceMonitor: {
                     enabled: true,
                     interval: "15s",
@@ -350,26 +400,9 @@ export class ObservabilityComponent extends pulumi.ComponentResource {
                         memory: dcgmExporterConfig.memoryLimit,
                     },
                 },
+                tolerations,
+                ...(args.dcgmExporter?.nodeSelector ? { nodeSelector: args.dcgmExporter.nodeSelector } : {}),
             };
-
-            // Add tolerations if provided
-            if (args.dcgmExporter?.tolerations) {
-                dcgmValues.tolerations = args.dcgmExporter.tolerations;
-            } else {
-                // Default GPU tolerations
-                dcgmValues.tolerations = [
-                    {
-                        key: "nvidia.com/gpu",
-                        operator: "Exists",
-                        effect: "NoSchedule",
-                    },
-                ];
-            }
-
-            // Add node selector if provided
-            if (args.dcgmExporter?.nodeSelector) {
-                dcgmValues.nodeSelector = args.dcgmExporter.nodeSelector;
-            }
 
             this.dcgmExporter = new k8s.helm.v3.Release(`${name}-dcgm-exporter`, {
                 chart: "dcgm-exporter",

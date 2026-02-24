@@ -287,7 +287,7 @@ app.get('/api/keys/:token', async (req, res) => {
 // Create new API key in LiteLLM
 app.post('/api/keys', async (req, res) => {
   try {
-    const { name, models } = req.body;
+    const { name, models, team_id } = req.body;
 
     if (!name || !models || models.length === 0) {
       return res.status(400).json({ error: 'Name and models are required' });
@@ -301,6 +301,7 @@ app.post('/api/keys', async (req, res) => {
     const requestBody = {
       models: models,
       key_alias: name,
+      ...(team_id && { team_id }),
       metadata: {
         created_by: 'litellm-app',
         name: name
@@ -441,7 +442,6 @@ app.get('/api/spend/report', async (req, res) => {
 });
 
 // Get spend logs
-// LiteLLM /spend/logs with summarize=false returns individual request logs
 app.get('/api/spend/logs', async (req, res) => {
   try {
     const headers = {
@@ -449,16 +449,16 @@ app.get('/api/spend/logs', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // Build params - use summarize=false to get individual logs instead of aggregated data
-    // Don't pass date params - LiteLLM date filtering is unreliable, filter client-side instead
+    const { start_date, end_date } = req.query;
     const params = { summarize: false };
+    if (start_date) params.start_date = start_date;
+    if (end_date) params.end_date = end_date;
 
     const response = await axios.get(`${LITELLM_API_BASE}/spend/logs`, {
       headers,
       params
     });
 
-    // Ensure we always return an array
     let data = response.data;
     if (!Array.isArray(data)) {
       if (data && typeof data === 'object' && Array.isArray(data.logs)) {
@@ -473,15 +473,129 @@ app.get('/api/spend/logs', async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('Error fetching spend logs:', error.response?.data || error.message);
-    // Return empty array instead of error for graceful degradation
     if (error.response?.status === 404 || error.response?.status === 400) {
       return res.json([]);
     }
     res.status(error.response?.status || 500).json({
       error: error.response?.data?.error || error.message || 'Failed to fetch spend logs',
-      data: [] // Include empty data array for fallback
+      data: []
     });
   }
+});
+
+// ============================================================================
+// Team Management Endpoints
+// ============================================================================
+
+// Create a new team
+app.post('/api/teams', async (req, res) => {
+  try {
+    const headers = {
+      'Authorization': `Bearer ${LITELLM_MASTER_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    const response = await axios.post(`${LITELLM_API_BASE}/team/new`, req.body, { headers });
+    res.status(201).json(response.data);
+  } catch (error) {
+    console.error('Error creating team:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message || 'Failed to create team'
+    });
+  }
+});
+
+// List all teams
+app.get('/api/teams', async (req, res) => {
+  try {
+    const headers = {
+      'Authorization': `Bearer ${LITELLM_MASTER_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    const response = await axios.get(`${LITELLM_API_BASE}/team/list`, { headers });
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error listing teams:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message || 'Failed to list teams',
+      data: []
+    });
+  }
+});
+
+// Get team info
+app.get('/api/teams/:id', async (req, res) => {
+  try {
+    const headers = {
+      'Authorization': `Bearer ${LITELLM_MASTER_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    const response = await axios.get(`${LITELLM_API_BASE}/team/info`, {
+      headers,
+      params: { team_id: req.params.id }
+    });
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error fetching team info:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message || 'Failed to fetch team info'
+    });
+  }
+});
+
+// Update a team
+app.put('/api/teams/:id', async (req, res) => {
+  try {
+    const headers = {
+      'Authorization': `Bearer ${LITELLM_MASTER_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    const response = await axios.post(`${LITELLM_API_BASE}/team/update`, {
+      ...req.body,
+      team_id: req.params.id,
+    }, { headers });
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error updating team:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message || 'Failed to update team'
+    });
+  }
+});
+
+// Delete a team
+app.delete('/api/teams/:id', async (req, res) => {
+  try {
+    const headers = {
+      'Authorization': `Bearer ${LITELLM_MASTER_KEY}`,
+      'Content-Type': 'application/json'
+    };
+
+    const response = await axios.post(`${LITELLM_API_BASE}/team/delete`, {
+      team_ids: [req.params.id],
+    }, { headers });
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error deleting team:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error || error.message || 'Failed to delete team'
+    });
+  }
+});
+
+// ============================================================================
+// Webhook Endpoints
+// ============================================================================
+
+// Budget alert webhook receiver
+app.post('/api/webhooks/budget', (req, res) => {
+  const { event, event_group, event_message, spend, max_budget, key_alias, team_id } = req.body;
+  console.log(`[BUDGET ALERT] ${event}: ${event_message}`);
+  console.log(`  Spend: $${spend}, Budget: $${max_budget}, Key: ${key_alias}, Team: ${team_id}`);
+  res.json({ received: true });
 });
 
 // ============================================================================

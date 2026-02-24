@@ -9,6 +9,6 @@
         "forceConsistentCasingInFileNames": true,
         "outDir": "./bin"
     },
-    "include": ["*.ts"],
+    "include": ["*.ts", "src/**/*.ts"],
     "exclude": ["node_modules"]
 }

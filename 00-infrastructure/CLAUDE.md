@@ -11,7 +11,7 @@ Pulumi TypeScript project for EKS cluster with GPU support via Karpenter, EBS CS
 
 ### KarpenterNodePoolComponent
 
-Reusable component for creating Karpenter NodePools. Located in `karpenterNodePoolComponent.ts`.
+Reusable component for creating Karpenter NodePools. Located in `src/components/karpenterNodePoolComponent.ts`.
 
 **Required:**
 - `instanceTypes: string[]` - Instance types (e.g., `["g5.2xlarge"]`)
@@ -46,7 +46,7 @@ const gpuPool = new KarpenterNodePoolComponent("gpu-standard", {
 
 ### KServeComponent
 
-Component for installing KServe v0.16 with all dependencies. Located in `kserveComponent.ts`.
+Component for installing KServe v0.16 with all dependencies. Located in `src/components/kserveComponent.ts`.
 
 **Installs:**
 - cert-manager (from Jetstack Helm repo)
@@ -56,9 +56,10 @@ Component for installing KServe v0.16 with all dependencies. Located in `kserveC
 - llmisvc-resources (LLMInferenceService controller and runtimes)
 
 **Args:**
-- `certManagerVersion?: string` - cert-manager version (default: `"v1.16.1"`)
+- `certManagerVersion?: string` - cert-manager version (default: `"v1.19.3"`)
 - `kserveVersion?: string` - KServe version (default: `"v0.16.0"`)
-- `deploymentMode?: "Standard" | "Serverless"` - Deployment mode (default: `"Standard"`)
+- `gatewayApiVersion?: string` - Gateway API CRDs version (default: `"v1.4.1"`)
+- `deploymentMode?: "RawDeployment" | "Serverless"` - Deployment mode (default: `"RawDeployment"`)
 - `storageInitializer?: StorageInitializerConfig` - Storage initializer resource config
 - `llmisvController?: LLMISvcControllerConfig` - LLMInferenceService controller resource config
 
@@ -77,9 +78,9 @@ Component for installing KServe v0.16 with all dependencies. Located in `kserveC
 **Example:**
 ```typescript
 const kserve = new KServeComponent("kserve", {
-    certManagerVersion: "v1.16.1",
+    certManagerVersion: "v1.19.3",
     kserveVersion: "v0.16.0",
-    deploymentMode: "Standard",
+    deploymentMode: "RawDeployment",
     storageInitializer: {
         memoryRequest: "16Gi",
         memoryLimit: "64Gi",
@@ -97,7 +98,7 @@ const kserve = new KServeComponent("kserve", {
 
 ### LLMInferenceServiceComponent
 
-Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Located in `llmInferenceServiceComponent.ts`.
+Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Located in `src/components/llmInferenceServiceComponent.ts`.
 
 **Required:**
 - `modelUri: string` - Model URI (e.g., `"oci://...ecr.../kserve-models/qwen-qwen2-5-7b-instruct:latest"` or `"hf://Qwen/Qwen2.5-7B-Instruct"`)
@@ -130,7 +131,7 @@ startupProbe: {
 **Example:**
 ```typescript
 const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
-    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen2-5-7b-instruct:latest",
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/qwen-qwen2-5-7b-instruct:latest`,
     modelName: "Qwen/Qwen2.5-7B-Instruct",
     storageType: "oci",
     namespace: "default",
@@ -165,7 +166,7 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
 
 ### ObservabilityComponent
 
-Reusable component for deploying a complete observability stack. Located in `observabilityComponent.ts`.
+Reusable component for deploying a complete observability stack. Located in `src/components/observabilityComponent.ts`.
 
 **Installs:**
 - Metrics Server (for HPA support)
@@ -222,6 +223,8 @@ pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
 
 Set via `pulumi config set`:
 - `clusterName` (required) - EKS cluster name
+- `ecrBaseUrl` (required for OCI models) - ECR registry base URL (e.g., `052848974346.dkr.ecr.us-east-1.amazonaws.com`)
+- `gpuSnapshotId` (recommended) - EBS snapshot ID with pre-cached container images for faster GPU node startup
 - `huggingface-token` (secret) - HuggingFace API token for model downloads
 
 ## Pulumi ESC Commands
@@ -296,6 +299,10 @@ Three NodePools are configured via Karpenter:
 - **gpu-standard**: `g5.xlarge`, `g5.2xlarge`, `g5.4xlarge` (A10G 24GB) - For 7B-13B models
 - **gpu-a100** (commented): `p4de.24xlarge` (8x A100 80GB) - For large MoE models (480B+)
 
+## Networking
+
+KServe's LLMInferenceService controller requires a Gateway API Gateway for networking reconciliation. A dummy `kserve-ingress-gateway` Gateway resource is created in the `kserve` namespace to satisfy this validation. Ingress creation is disabled (`disableIngressCreation: true`) since LiteLLM routes to models directly via Kubernetes service names.
+
 ## Infrastructure Components
 
 - **EKS Cluster**: Standard EKS cluster with API authentication mode
@@ -304,6 +311,7 @@ Three NodePools are configured via Karpenter:
 - **gp3 StorageClass**: Default storage class for all persistent volumes
 - **Karpenter**: Manages GPU and general workload nodes with Bottlerocket AMI
 - **AWS Load Balancer Controller**: Manages ALB/NLB for Ingress and Service resources
+- **Gateway API CRDs**: Required by KServe's LLMInferenceService networking
 
 ## Gated Models
 

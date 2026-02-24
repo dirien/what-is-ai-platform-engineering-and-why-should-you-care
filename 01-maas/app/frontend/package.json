@@ -9,17 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "axios": "^1.6.2",
-    "recharts": "^2.12.7",
-    "date-fns": "^3.6.0"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "axios": "^1.13.5",
+    "recharts": "^3.7.0",
+    "date-fns": "^4.1.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.0.8",
-    "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.32",
-    "tailwindcss": "^3.4.0"
+    "@vitejs/plugin-react": "^5.1.4",
+    "vite": "^7.3.1",
+    "autoprefixer": "^10.4.24",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.2.1"
   }
 }

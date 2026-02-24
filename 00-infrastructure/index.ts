@@ -5,17 +5,26 @@ import * as awsx from "@pulumi/awsx";
 import * as k8s from "@pulumi/kubernetes";
 import {SubnetType} from "@pulumi/awsx/ec2";
 import * as pulumiservice from "@pulumi/pulumiservice";
-import {KarpenterNodePoolComponent} from "./karpenterNodePoolComponent";
-import {KarpenterComponent} from "./karpenterComponent";
-import {AwsLbControllerComponent} from "./awsLbControllerComponent";
-import {KServeComponent} from "./kserveComponent";
-import {ObservabilityComponent} from "./observabilityComponent";
-import {LLMInferenceServiceComponent} from "./llmInferenceServiceComponent";
+import {KarpenterNodePoolComponent} from "./src/components/karpenterNodePoolComponent";
+import {KarpenterComponent} from "./src/components/karpenterComponent";
+import {AwsLbControllerComponent} from "./src/components/awsLbControllerComponent";
+import {KServeComponent} from "./src/components/kserveComponent";
+import {ObservabilityComponent} from "./src/components/observabilityComponent";
+import {LLMInferenceServiceComponent} from "./src/components/llmInferenceServiceComponent";
 
 const config = new pulumi.Config();
 const clusterName = config.require("clusterName");
+const ecrBaseUrl = config.get("ecrBaseUrl") || "";
+const gpuSnapshotId = config.get("gpuSnapshotId") || "";
+const owner = config.get("owner") || "dirien";
 const currentIdentity = aws.getCallerIdentity();
 const currentRegion = aws.getRegion();
+const tags = {
+    Environment: pulumi.getStack(),
+    Project: pulumi.getProject(),
+    ManagedBy: "Pulumi",
+    Owner: owner,
+};
 
 
 // VPC for EKS cluster with public and private subnets
@@ -23,10 +32,12 @@ const currentRegion = aws.getRegion();
 const eksVpc = new awsx.ec2.Vpc("eks-vpc", {
     enableDnsHostnames: true,
     cidrBlock: "10.0.0.0/16",
+    tags: tags,
     subnetSpecs: [
         {
             type: SubnetType.Public,
             tags: {
+                ...tags,
                 [`kubernetes.io/cluster/${clusterName}`]: "shared",
                 "kubernetes.io/role/elb": "1",
                 [`karpenter.sh/discovery`]: clusterName, // For Karpenter subnet discovery
@@ -35,6 +46,7 @@ const eksVpc = new awsx.ec2.Vpc("eks-vpc", {
         {
             type: SubnetType.Private,
             tags: {
+                ...tags,
                 [`kubernetes.io/cluster/${clusterName}`]: "shared",
                 "kubernetes.io/role/internal-elb": "1",
                 [`karpenter.sh/discovery`]: clusterName, // For Karpenter subnet discovery
@@ -59,7 +71,8 @@ const cluster = new eks.Cluster("eks-cluster", {
     // Enable OIDC provider for IRSA (IAM Roles for Service Accounts)
     createOidcProvider: true,
     // EKS version
-    version: "1.31",
+    version: "1.32",
+    tags: tags,
 });
 
 // Tag the EKS cluster security group for Karpenter discovery
@@ -103,6 +116,7 @@ const nodeRole = new aws.iam.Role("system-node-role", {
             },
         }],
     }),
+    tags: tags,
 });
 
 // Attach required policies for EKS worker nodes
@@ -141,18 +155,20 @@ const systemNodeGroup = new eks.ManagedNodeGroup("system-nodes", {
         value: "true",
         effect: "NO_SCHEDULE",
     }],
+    tags: tags,
 });
 
 // EKS Addons - managed by AWS for automatic updates and compatibility
 // Note: vpc-cni and kube-proxy are automatically created by the eks.Cluster component
 
-// CoreDNS - Cluster DNS (v1.11.4 is the latest for EKS 1.31)
+// CoreDNS - Cluster DNS (v1.11.4 is the latest for EKS 1.32)
 const coreDnsAddon = new aws.eks.Addon("coredns", {
     clusterName: cluster.eksCluster.name,
     addonName: "coredns",
-    addonVersion: "v1.11.4-eksbuild.24",
+    addonVersion: "v1.11.4-eksbuild.28",
     resolveConflictsOnCreate: "OVERWRITE",
     resolveConflictsOnUpdate: "OVERWRITE",
+    tags: tags,
 }, {dependsOn: [systemNodeGroup]});
 
 // EKS Pod Identity Agent - For IRSA replacement (modern pod identity)
@@ -162,6 +178,7 @@ const podIdentityAddon = new aws.eks.Addon("eks-pod-identity-agent", {
     addonVersion: "v1.3.10-eksbuild.1",
     resolveConflictsOnCreate: "OVERWRITE",
     resolveConflictsOnUpdate: "OVERWRITE",
+    tags: tags,
 }, {dependsOn: [systemNodeGroup]});
 
 // EBS CSI Driver - Required for persistent volumes with EBS
@@ -181,6 +198,7 @@ const ebsCsiRole = new aws.iam.Role("ebs-csi-role", {
             ],
         }],
     }),
+    tags: tags,
 });
 
 new aws.iam.RolePolicyAttachment("ebs-csi-policy-attachment", {
@@ -193,6 +211,7 @@ const ebsCsiPodIdentity = new aws.eks.PodIdentityAssociation("ebs-csi-pod-identi
     namespace: "kube-system",
     serviceAccount: "ebs-csi-controller-sa",
     roleArn: ebsCsiRole.arn,
+    tags: tags,
 }, {dependsOn: [podIdentityAddon]});
 
 const ebsCsiAddon = new aws.eks.Addon("aws-ebs-csi-driver", {
@@ -201,6 +220,7 @@ const ebsCsiAddon = new aws.eks.Addon("aws-ebs-csi-driver", {
     addonVersion: "v1.43.0-eksbuild.1",
     resolveConflictsOnCreate: "OVERWRITE",
     resolveConflictsOnUpdate: "OVERWRITE",
+    tags: tags,
 }, {dependsOn: [systemNodeGroup, ebsCsiPodIdentity]});
 
 // Kubernetes provider for Karpenter and other K8s resources
@@ -234,10 +254,11 @@ const karpenter = new KarpenterComponent("karpenter", {
     clusterName: clusterName,
     clusterEndpoint: cluster.eksCluster.endpoint,
     clusterSecurityGroupId: cluster.nodeSecurityGroup.apply(sg => sg!.id),
-    karpenterVersion: "1.8.2",
+    karpenterVersion: "1.9.0",
     namespace: "kube-system",
     awsRegion: currentRegion.then(r => r.region),
     awsAccountId: currentIdentity.then(id => id.accountId),
+    tags: tags,
 }, {
     provider: k8sProvider,
     dependsOn: [podIdentityAddon, systemNodeGroup],
@@ -272,15 +293,16 @@ const gpuNodeClass = karpenter.createEC2NodeClass("gpu-nodeclass", {
                 deleteOnTermination: true,
                 // EBS snapshot with pre-cached container images (built via 99-model-oci-image)
                 // Contains: meta-llama-3-8b-instruct, qwen2.5-7b-instruct, qwen3-8b, gpt-oss-20b, llm-d-dev:v0.2.2
-                snapshotID: "snap-0dca38ea429a621b1",
+                snapshotID: gpuSnapshotId,
             },
         },
     ],
     tags: {
+        ...tags,
         "karpenter.sh/discovery": clusterName,
         "Name": `${clusterName}-gpu-node`,
     },
-}, clusterName, {provider: k8sProvider});
+}, {provider: k8sProvider});
 
 // EC2NodeClass for general workloads (non-GPU)
 const generalNodeClass = karpenter.createEC2NodeClass("general-nodeclass", {
@@ -310,10 +332,11 @@ const generalNodeClass = karpenter.createEC2NodeClass("general-nodeclass", {
         },
     ],
     tags: {
+        ...tags,
         "karpenter.sh/discovery": clusterName,
         "Name": `${clusterName}-general-node`,
     },
-}, clusterName, {provider: k8sProvider});
+}, {provider: k8sProvider});
 
 // NodePool for general workloads (non-GPU) - Prometheus, Grafana, KServe controllers, etc.
 const generalNodePool = new KarpenterNodePoolComponent("general", {
@@ -356,9 +379,10 @@ const gpuNodePool = new KarpenterNodePoolComponent("gpu-standard", {
 const awsLbController = new AwsLbControllerComponent("aws-lb-controller", {
     clusterName: clusterName,
     vpcId: eksVpc.vpcId,
-    chartVersion: "1.16.0",
+    chartVersion: "3.0.0",
     namespace: "kube-system",
     awsRegion: currentRegion.then(r => r.region),
+    tags: tags,
 }, {
     provider: k8sProvider,
     dependsOn: [podIdentityAddon, systemNodeGroup],
@@ -399,9 +423,9 @@ values:
 
 // KServe for model serving with LLMInferenceService support
 const kserve = new KServeComponent("kserve", {
-    certManagerVersion: "v1.16.1",
+    certManagerVersion: "v1.19.3",
     kserveVersion: "v0.16.0",
-    deploymentMode: "Standard",
+    deploymentMode: "RawDeployment",
     storageInitializer: {memoryRequest: "16Gi", memoryLimit: "64Gi", cpuRequest: "2", cpuLimit: "8"},
     llmisvController: {cpuRequest: "200m", cpuLimit: "1", memoryRequest: "512Mi", memoryLimit: "2Gi"},
 }, {provider: k8sProvider, dependsOn: [generalNodePool, gpuNodePool]});
@@ -412,11 +436,11 @@ const observability = new ObservabilityComponent("observability", {
     namespace: "monitoring",
     storageClassName: "gp3",  // Use the gp3 StorageClass created in index.ts
     metricsServer: {enabled: true, version: "3.13.0"},
-    prometheusStack: {version: "79.9.0", alertmanagerEnabled: false, storageSize: "50Gi"},
+    prometheusStack: {version: "82.2.1", alertmanagerEnabled: false, storageSize: "50Gi"},
     grafana: {enabled: true, adminPassword: "admin", storageSize: "10Gi"},
     dcgmExporter: {
         enabled: true,
-        version: "4.6.0",
+        version: "4.8.1",
         nodeSelector: {"karpenter.k8s.aws/instance-gpu-count": "1"},  // Updated for Karpenter labels
         tolerations: [{key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule"}],
         memoryRequest: "512Mi",
@@ -429,7 +453,7 @@ const observability = new ObservabilityComponent("observability", {
 // Runs on G5 instances with A10G GPU (24GB VRAM)
 // Reference: https://kserve.github.io/website/docs/getting-started/genai-first-llmisvc
 const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
-    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen2-5-7b-instruct:latest",
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/qwen-qwen2-5-7b-instruct:latest`,
     modelName: "Qwen/Qwen2.5-7B-Instruct",
     storageType: "oci",
     namespace: "default",
@@ -446,12 +470,12 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
         "--max_model_len=32768",
         "--gpu_memory_utilization=0.9",
     ],
-    // Startup probe: 32K context needs ~5 min for model load + CUDA graph compilation
+    // Startup probe: allow 30 min for cold EBS lazy loading + model load + torch.compile + CUDA graph warmup
     startupProbe: {
         initialDelaySeconds: 60,
         periodSeconds: 30,
         timeoutSeconds: 30,
-        failureThreshold: 20,  // 60s + 20*30s = 11 min max
+        failureThreshold: 60,  // 60s + 60*30s = 31 min max
     },
 }, {provider: k8sProvider, dependsOn: [kserve]});
 
@@ -460,7 +484,7 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
 // Uses OCI storage for faster startup - model image is pre-cached on GPU nodes via EBS snapshot
 // The snapshot (snap-0dca38ea429a621b1) contains the container image, eliminating download time
 const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
-    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest",
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest`,
     modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
     storageType: "oci",
     namespace: "default",
@@ -477,12 +501,12 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
         "--max_model_len=8192",
         "--gpu_memory_utilization=0.9",
     ],
-    // Startup probe: 8K context is faster, ~3 min for model load
+    // Startup probe: allow 30 min for cold EBS lazy loading + model load + torch.compile + CUDA graph warmup
     startupProbe: {
         initialDelaySeconds: 60,
         periodSeconds: 30,
         timeoutSeconds: 30,
-        failureThreshold: 10,  // 60s + 10*30s = 6 min max
+        failureThreshold: 60,  // 60s + 60*30s = 31 min max
     },
 }, {provider: k8sProvider, dependsOn: [kserve]});
 
@@ -490,7 +514,7 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
 // Uses OCI storage - model image is pre-cached on GPU nodes via EBS snapshot
 // Note: Qwen3-8B (8.2B params) is larger than Qwen2.5-7B, limiting KV cache to ~20K context on A10G
 const qwen3Model = new LLMInferenceServiceComponent("qwen3-8b", {
-    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen3-8b:latest",
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/qwen-qwen3-8b:latest`,
     modelName: "Qwen/Qwen3-8B",
     storageType: "oci",
     namespace: "default",
@@ -508,12 +532,12 @@ const qwen3Model = new LLMInferenceServiceComponent("qwen3-8b", {
         "--max_model_len=20480",
         "--gpu_memory_utilization=0.9",
     ],
-    // Startup probe: ~5 min for model load + CUDA graph compilation
+    // Startup probe: allow 30 min for cold EBS lazy loading + model load + torch.compile + CUDA graph warmup
     startupProbe: {
         initialDelaySeconds: 60,
         periodSeconds: 30,
         timeoutSeconds: 30,
-        failureThreshold: 20,  // 60s + 20*30s = 11 min max
+        failureThreshold: 60,  // 60s + 60*30s = 31 min max
     },
 }, {provider: k8sProvider, dependsOn: [kserve]});
 

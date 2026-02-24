@@ -48,14 +48,19 @@ export interface EcrRepositoryArgs {
  */
 export class EcrRepositoryComponent extends pulumi.ComponentResource {
     /**
-     * The ECR repository resource
+     * The ECR repository resource (internal implementation detail)
      */
-    public readonly repository: aws.ecr.Repository;
+    private readonly repository: aws.ecr.Repository;
 
     /**
-     * The ECR lifecycle policy
+     * The ECR lifecycle policy (internal implementation detail)
      */
-    public readonly lifecyclePolicy: aws.ecr.LifecyclePolicy;
+    private readonly lifecyclePolicy: aws.ecr.LifecyclePolicy;
+
+    /**
+     * The repository name
+     */
+    public readonly repositoryName: pulumi.Output<string>;
 
     /**
      * The repository URL for pushing/pulling images
@@ -121,11 +126,13 @@ export class EcrRepositoryComponent extends pulumi.ComponentResource {
         }, { parent: this });
 
         // Export outputs
+        this.repositoryName = this.repository.name;
         this.repositoryUrl = this.repository.repositoryUrl;
         this.repositoryArn = this.repository.arn;
         this.registryId = this.repository.registryId;
 
         this.registerOutputs({
+            repositoryName: this.repositoryName,
             repositoryUrl: this.repositoryUrl,
             repositoryArn: this.repositoryArn,
             registryId: this.registryId,

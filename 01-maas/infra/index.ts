@@ -2,20 +2,25 @@ import * as pulumi from "@pulumi/pulumi";
 import * as aws from "@pulumi/aws";
 import * as k8s from "@pulumi/kubernetes";
 import * as dockerBuild from "@pulumi/docker-build";
-import { EcrRepositoryComponent } from "./ecrComponent";
-import { JupyterHubComponent } from "./jupyterhubComponent";
-import { MaaSComponent } from "./maasComponent";
+import { EcrRepositoryComponent } from "./src/components/ecrComponent";
+import { JupyterHubComponent } from "./src/components/jupyterhubComponent";
+import { MaaSComponent } from "./src/components/maasComponent";
 
 // Configuration
 const config = new pulumi.Config();
 const appName = config.get("appName") || "maas";
 const environment = pulumi.getStack();
+const owner = config.get("owner") || "dirien";
+
+// Infrastructure config (VPC, subnets, security groups - set via Pulumi config or ESC)
+const infraConfig = new pulumi.Config("infra");
 
 // Tags for all resources
 const tags = {
     Environment: environment,
     Project: appName,
     ManagedBy: "Pulumi",
+    Owner: owner,
 };
 
 // =============================================================================
@@ -95,7 +100,7 @@ const image = new dockerBuild.Image(`${appName}-image`, {
 // Provides Jupyter notebooks with LiteLLM integration for data scientists
 const jupyterhub = new JupyterHubComponent("jupyterhub", {
     namespace: "jupyterhub",
-    chartVersion: "4.3.2-0.dev.git.7211.hba50290a",
+    chartVersion: "4.3.2",
     // LiteLLM URL will be updated after MaaS component is created
     litellmServiceUrl: "http://maas-litellm.maas.svc.cluster.local:4000",
     storageSize: "10Gi",
@@ -130,6 +135,7 @@ const jupyterhub = new JupyterHubComponent("jupyterhub", {
             gpuCount: 1,
         },
     ],
+    tags: tags,
 }, { provider: k8sProvider });
 
 // =============================================================================
@@ -141,12 +147,15 @@ const jupyterhub = new JupyterHubComponent("jupyterhub", {
 const maas = new MaaSComponent("maas", {
     namespace: "maas",
     imageRef: image.ref,
-    litellmChartVersion: "0.1.830",
+    litellmChartVersion: "1.81.12-stable",
     litellmUsername: "admin",
     litellmPassword: "admin",
     jupyterhubApiUrl: "http://hub.jupyterhub.svc.cluster.local:8081",
     jupyterhubPublicUrl: jupyterhub.publicUrl,
     jupyterhubApiToken: jupyterhub.apiToken,
+    vpcId: infraConfig.require("vpcId"),
+    privateSubnetIds: infraConfig.requireObject<string[]>("privateSubnetIds"),
+    clusterSecurityGroupId: infraConfig.require("clusterSecurityGroupId"),
     enableLoadBalancer: true,
     litellmResources: {
         requests: {
@@ -168,6 +177,7 @@ const maas = new MaaSComponent("maas", {
             memory: "512Mi",
         },
     },
+    tags: tags,
 }, { provider: k8sProvider, dependsOn: [image, jupyterhub] });
 
 // =============================================================================
@@ -177,22 +187,25 @@ const maas = new MaaSComponent("maas", {
 // ECR Repository outputs
 export const ecrRepositoryUrl = ecr.repositoryUrl;
 export const ecrRepositoryArn = ecr.repositoryArn;
-export const ecrRepositoryName = ecr.repository.name;
+export const ecrRepositoryName = ecr.repositoryName;
 
 // Docker image outputs
 export const imageRef = image.ref;
 export const imageDigest = image.digest;
 
 // MaaS outputs
-export const maasNamespace = maas.namespace.metadata.name;
+export const maasNamespace = maas.namespaceName;
 export const litellmReleaseName = maas.litellmReleaseName;
 export const litellmServiceUrl = maas.litellmServiceUrl;
 export const litellmPublicUrl = maas.litellmPublicUrl;
 export const maasServiceUrl = maas.appServiceUrl;
 export const maasPublicUrl = maas.publicUrl;
 
+// RDS outputs
+export const rdsEndpoint = maas.rdsEndpoint;
+
 // JupyterHub outputs
-export const jupyterhubNamespace = jupyterhub.namespace.metadata.name;
+export const jupyterhubNamespace = jupyterhub.namespaceName;
 export const jupyterhubProxyUrl = pulumi.interpolate`http://proxy-public.jupyterhub.svc.cluster.local`;
 export const jupyterhubPublicUrl = jupyterhub.publicUrl;
 

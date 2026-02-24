@@ -36,6 +36,7 @@ const FinOpsDashboard = () => {
     spendByDay: [],
     spendByModel: [],
     spendByKey: [],
+    spendByTeam: [],
     tokensByModel: [],
     modelPricing: []
   });
@@ -67,21 +68,24 @@ const FinOpsDashboard = () => {
 
     try {
       const { startDate, endDate } = getDateRange();
+      const start_date = startDate.toISOString().split('T')[0];
+      const end_date = endDate.toISOString().split('T')[0];
 
-      // Fetch spend logs, model info (for pricing), public models (for filtering), and keys in parallel
-      // Note: Don't pass dates to backend - filter client-side for more reliable results
-      const [spendLogsRes, modelInfoRes, publicModelsRes, keysRes] = await Promise.all([
-        axios.get('/api/spend/logs').catch(err => {
-          // Ensure we always return an array, not an error object
-          console.error('Spend logs fetch error:', err.response?.data || err.message);
-          return { data: [] };
-        }),
-        axios.get('/api/model-info').catch(err => ({ data: { data: [] } })),
-        axios.get('/api/public-model-hub').catch(err => ({ data: [] })),
-        axios.get('/api/keys').catch(err => ({ data: { data: [] } }))
+      const [
+        spendByKeyRes,
+        spendByTeamRes,
+        spendLogsRes,
+        modelInfoRes,
+        publicModelsRes
+      ] = await Promise.all([
+        axios.get('/api/spend/report', { params: { start_date, end_date, group_by: 'api_key' } }).catch(() => ({ data: [] })),
+        axios.get('/api/spend/report', { params: { start_date, end_date, group_by: 'team' } }).catch(() => ({ data: [] })),
+        axios.get('/api/spend/logs', { params: { start_date, end_date } }).catch(() => ({ data: [] })),
+        axios.get('/api/model-info').catch(() => ({ data: { data: [] } })),
+        axios.get('/api/public-model-hub').catch(() => ({ data: [] })),
       ]);
 
-      // Handle both array and object responses - ensure we never process error objects
+      // Parse spend logs for daily breakdown
       let logs = [];
       const responseData = spendLogsRes.data;
       if (Array.isArray(responseData)) {
@@ -90,72 +94,24 @@ const FinOpsDashboard = () => {
         logs = responseData.data;
       } else if (responseData?.logs && Array.isArray(responseData.logs)) {
         logs = responseData.logs;
-      } else if (responseData && typeof responseData === 'object' && responseData.error) {
-        // This is an error response, not log data - ignore it
-        console.warn('Spend logs returned an error:', responseData.error);
-        logs = [];
       }
 
-      // Filter logs by date range client-side
-      const startTime = startDate.getTime();
-      const endTime = endDate.getTime();
-      logs = logs.filter(log => {
-        const logTime = new Date(log.startTime || log.created_at || log.timestamp).getTime();
-        return logTime >= startTime && logTime <= endTime;
-      });
-
-      // Get published models only (for filtering)
+      // Get published models for filtering
       const publicModels = publicModelsRes.data || [];
       const publishedModelNames = new Set(publicModels.map(m => m.model_group || m.model_name));
-      const keys = keysRes.data?.data || [];
 
-      // Get model info (for pricing) - model_info has accurate pricing data
+      // Get model info for pricing table
       const modelInfoData = modelInfoRes.data?.data || modelInfoRes.data || [];
 
-      // Build pricing lookup map by model name/group from model_info
-      const pricingMap = new Map();
-      modelInfoData.forEach(m => {
-        const modelName = m.model_name;
-        const pricing = {
-          inputCostPerToken: m.model_info?.input_cost_per_token || 0,
-          outputCostPerToken: m.model_info?.output_cost_per_token || 0,
-          description: m.model_info?.description || ''
-        };
-        pricingMap.set(modelName, pricing);
-      });
-
-      // Helper function to get spend from log
-      const calculateSpend = (log) => {
-        // Use the spend value from LiteLLM which is already calculated accurately
-        // This is more reliable than recalculating from tokens
-        if (typeof log.spend === 'number' && log.spend > 0) {
-          return log.spend;
-        }
-
-        // Fall back to calculating from tokens if spend is not available
-        const modelGroup = log.model_group || log.model || 'Unknown';
-        const pricing = pricingMap.get(modelGroup);
-
-        if (pricing) {
-          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
-          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
-          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
-        }
-
-        return 0;
-      };
-
-      // Calculate summary metrics
+      // Build summary from spend logs
       let totalSpend = 0;
       let totalTokens = 0;
       let inputTokens = 0;
       let outputTokens = 0;
 
       logs.forEach(log => {
-        // Use calculated spend based on tokens and pricing
-        totalSpend += calculateSpend(log);
-        const logTokens = log.total_tokens || log.usage?.total_tokens || 0;
-        totalTokens += logTokens;
+        totalSpend += log.spend || 0;
+        totalTokens += log.total_tokens || log.usage?.total_tokens || 0;
         inputTokens += log.prompt_tokens || log.usage?.prompt_tokens || 0;
         outputTokens += log.completion_tokens || log.usage?.completion_tokens || 0;
       });
@@ -163,33 +119,29 @@ const FinOpsDashboard = () => {
       const totalRequests = logs.length;
       const avgCostPerRequest = totalRequests > 0 ? totalSpend / totalRequests : 0;
 
-      // Group spend by day
+      // Group spend by day using ISO date keys for correct sorting
       const spendByDayMap = new Map();
       logs.forEach(log => {
-        const date = new Date(log.startTime || log.created_at || log.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        const existing = spendByDayMap.get(date) || { date, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += calculateSpend(log);
+        const logDate = new Date(log.startTime || log.created_at || log.timestamp);
+        const isoKey = logDate.toISOString().split('T')[0];
+        const displayDate = logDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const existing = spendByDayMap.get(isoKey) || { isoKey, date: displayDate, spend: 0, requests: 0, tokens: 0 };
+        existing.spend += log.spend || 0;
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
-        spendByDayMap.set(date, existing);
+        spendByDayMap.set(isoKey, existing);
       });
       const spendByDay = Array.from(spendByDayMap.values())
-        .sort((a, b) => {
-          const dateA = new Date(a.date + ', ' + new Date().getFullYear());
-          const dateB = new Date(b.date + ', ' + new Date().getFullYear());
-          return dateA - dateB;
-        })
+        .sort((a, b) => a.isoKey.localeCompare(b.isoKey))
         .slice(-30);
 
-      // Group spend by model (only published models)
-      // Use model_group when available (LiteLLM includes this field)
+      // Spend by model from logs (server-side report doesn't always have model breakdown)
       const spendByModelMap = new Map();
       logs.forEach(log => {
         const model = log.model_group || log.model || log.model_id || 'Unknown';
-        // Only include logs for published models
         if (!publishedModelNames.has(model) && publishedModelNames.size > 0) return;
         const existing = spendByModelMap.get(model) || { model, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += calculateSpend(log);
+        existing.spend += log.spend || 0;
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByModelMap.set(model, existing);
@@ -198,26 +150,32 @@ const FinOpsDashboard = () => {
         .sort((a, b) => b.spend - a.spend)
         .slice(0, 10);
 
-      // Group spend by API key
-      const spendByKeyMap = new Map();
-      logs.forEach(log => {
-        const keyId = log.api_key || 'Unknown';
-        // Try to find key name from keys list, or use alias from metadata if available
-        const keyName = keys.find(k => k.id === keyId)?.name ||
-                        log.metadata?.user_api_key_alias ||
-                        keyId.substring(0, 16) + '...';
-        const existing = spendByKeyMap.get(keyId) || { keyId, keyName, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += calculateSpend(log);
-        existing.requests += 1;
-        existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
-        spendByKeyMap.set(keyId, existing);
-      });
-      const spendByKey = Array.from(spendByKeyMap.values())
+      // Spend by key from report API
+      const spendByKeyData = Array.isArray(spendByKeyRes.data) ? spendByKeyRes.data : [];
+      const spendByKey = spendByKeyData
+        .map(item => ({
+          keyId: item.api_key || item.key || 'Unknown',
+          keyName: item.key_alias || item.key_name || (item.api_key || '').substring(0, 16) + '...',
+          spend: item.spend || item.total_spend || 0,
+          requests: item.total_count || item.requests || 0,
+          tokens: item.total_tokens || 0,
+        }))
         .sort((a, b) => b.spend - a.spend)
         .slice(0, 10);
 
-      // Extract model pricing info from model_info (has accurate pricing)
-      // Filter to only show published models
+      // Spend by team from report API
+      const spendByTeamData = Array.isArray(spendByTeamRes.data) ? spendByTeamRes.data : [];
+      const spendByTeam = spendByTeamData
+        .map(item => ({
+          teamId: item.team_id || 'Unknown',
+          teamName: item.team_alias || item.team_id || 'Unknown',
+          spend: item.spend || item.total_spend || 0,
+          requests: item.total_count || item.requests || 0,
+        }))
+        .sort((a, b) => b.spend - a.spend)
+        .slice(0, 10);
+
+      // Model pricing table
       const modelPricing = modelInfoData
         .filter(m => publishedModelNames.has(m.model_name) || publishedModelNames.size === 0)
         .map(m => ({
@@ -228,7 +186,7 @@ const FinOpsDashboard = () => {
           provider: m.litellm_params?.model?.split('/')[0] || m.model_info?.litellm_provider || 'custom'
         }));
 
-      // Prepare tokens by model for pie chart
+      // Tokens by model for pie chart
       const tokensByModel = spendByModel.map(m => ({
         name: m.model,
         value: m.tokens
@@ -246,12 +204,12 @@ const FinOpsDashboard = () => {
         spendByDay,
         spendByModel,
         spendByKey,
+        spendByTeam,
         tokensByModel,
         modelPricing
       });
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
-      // Extract error message safely, handle object errors
       let errorMessage = 'Failed to fetch dashboard data';
       if (err.response?.data?.error) {
         errorMessage = typeof err.response.data.error === 'string'
@@ -321,7 +279,7 @@ const FinOpsDashboard = () => {
     );
   }
 
-  const { summary, spendByDay, spendByModel, spendByKey, tokensByModel, modelPricing } = dashboardData;
+  const { summary, spendByDay, spendByModel, spendByKey, spendByTeam, tokensByModel, modelPricing } = dashboardData;
   const hasUsageData = summary.totalRequests > 0;
 
   return (
@@ -608,6 +566,33 @@ const FinOpsDashboard = () => {
           )}
         </div>
       </div>
+
+      {/* Spend by Team */}
+      {spendByTeam && spendByTeam.length > 0 && (
+        <div className="bg-white rounded-2xl p-6 shadow-soft border border-charcoal-100/50 mb-8">
+          <h3 className="text-lg font-semibold text-charcoal-900 mb-4 flex items-center gap-2">
+            <svg className="h-5 w-5 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
+            </svg>
+            Spend by Team
+          </h3>
+          <ResponsiveContainer width="100%" height={Math.max(200, spendByTeam.length * 50)}>
+            <BarChart data={spendByTeam} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+              <XAxis type="number" tick={{ fontSize: 12 }} stroke="#6B7280" tickFormatter={(v) => `$${v.toFixed(2)}`} />
+              <YAxis dataKey="teamName" type="category" tick={{ fontSize: 11 }} stroke="#6B7280" width={120} />
+              <Tooltip
+                formatter={(value, name) => {
+                  if (name === 'spend') return [`$${value.toFixed(4)}`, 'Spend'];
+                  return [value, name];
+                }}
+                contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }}
+              />
+              <Bar dataKey="spend" fill="#3D405B" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Model Pricing Table */}
       <div className="bg-white rounded-2xl p-6 shadow-soft border border-charcoal-100/50">

@@ -154,11 +154,27 @@ export interface KarpenterNodePoolArgs {
     architecture?: string;
 }
 
+/**
+ * Internal spec shape for the Karpenter NodePool CRD
+ */
+interface NodePoolSpec {
+    template: {
+        metadata?: { labels: Record<string, string> };
+        spec: {
+            nodeClassRef: { group: string; kind: string; name: string };
+            requirements: NodeRequirement[];
+            taints?: { key: string; value?: string; effect: string }[];
+        };
+    };
+    limits?: { cpu?: number | string; memory?: string };
+    disruption?: { consolidationPolicy?: string; consolidateAfter?: string };
+}
+
 export class KarpenterNodePoolComponent extends pulumi.ComponentResource {
     /**
      * The Kubernetes NodePool resource
      */
-    public readonly nodePool: k8s.apiextensions.CustomResource;
+    private readonly nodePool: k8s.apiextensions.CustomResource;
 
     /**
      * The name of the NodePool
@@ -171,7 +187,7 @@ export class KarpenterNodePoolComponent extends pulumi.ComponentResource {
         const poolName = args.poolName || name;
 
         // Build requirements array
-        const requirements: any[] = [];
+        const requirements: NodeRequirement[] = [];
 
         // Capacity type requirement
         requirements.push({
@@ -243,7 +259,7 @@ export class KarpenterNodePoolComponent extends pulumi.ComponentResource {
 
         // Build the spec
         // Using standard Karpenter (not EKS Auto Mode) with EC2NodeClass
-        const spec: any = {
+        const spec: NodePoolSpec = {
             template: {
                 spec: {
                     nodeClassRef: {

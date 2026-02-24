@@ -1,6 +1,6 @@
 # MaaS Platform (01-maas)
 
-This folder contains the Model-as-a-Service (MaaS) platform for the AI Platform Engineering demo. It bundles LiteLLM API gateway, a custom frontend application, and JupyterHub notebook support.
+This folder contains the Model-as-a-Service (MaaS) platform for the AI Platform Engineering demo. It bundles LiteLLM API gateway (v1.81.12-stable), a custom frontend application, and JupyterHub notebook support.
 
 ## Structure
 
@@ -10,10 +10,15 @@ This folder contains the Model-as-a-Service (MaaS) platform for the AI Platform 
     - Cream backgrounds, sage accents, Inter + Plus Jakarta Sans typography
     - Component styles: cards, badges, buttons, tables defined in index.css
     - **Notebooks page** for JupyterHub integration
+    - **FinOps Dashboard** with server-side spend aggregation and team spend view
   - `backend/` - Express.js API server (port 3001)
     - JupyterHub API integration for notebook management
+    - Team management CRUD endpoints
+    - Budget alert webhook receiver
+    - Server-side spend reporting via `/global/spend/report`
   - `Dockerfile` - Multi-stage Docker build
-- `infra/` - Pulumi infrastructure for ECR, Docker build, MaaS and JupyterHub deployment
+- `infra/` - Pulumi infrastructure for ECR, Docker build, RDS, MaaS and JupyterHub deployment
+  - `src/components/` - Pulumi component resources (EcrRepositoryComponent, MaaSComponent, JupyterHubComponent)
 - `notebook-image/` - Custom JupyterHub notebook Docker image (optional)
 
 ## Quick Start
@@ -37,23 +42,25 @@ pulumi up
 
 ## Infrastructure
 
-The `infra/` folder uses Pulumi TypeScript with:
+The `infra/` folder uses Pulumi TypeScript with components in `infra/src/components/`:
 
 ### Components
 
-- **EcrRepositoryComponent** - Reusable component for ECR repositories with:
+- **EcrRepositoryComponent** (`src/components/ecrComponent.ts`) - Reusable component for ECR repositories with:
   - Vulnerability scanning enabled
   - Server-side encryption (AES256)
   - Lifecycle policy for image cleanup
 
-- **MaaSComponent** - Bundles LiteLLM and the MaaS frontend app:
+- **MaaSComponent** (`src/components/maasComponent.ts`) - Bundles LiteLLM and the MaaS frontend app:
   - Deploys to dedicated `maas` namespace
-  - LiteLLM API gateway via Helm chart
+  - LiteLLM API gateway via Helm chart (v1.81.12-stable)
+  - **RDS PostgreSQL** (db.t4g.micro, PostgreSQL 16.4) for LiteLLM persistence with automated backups, encryption, and final snapshot protection
   - MaaS frontend app Deployment and Service
   - Internet-facing AWS NLB via Load Balancer Controller
   - JupyterHub API token secret management
+  - Budget alert webhook configuration
 
-- **JupyterHubComponent** - Deploys JupyterHub for notebook support:
+- **JupyterHubComponent** (`src/components/jupyterhubComponent.ts`) - Deploys JupyterHub for notebook support:
   - Deploys to dedicated `jupyterhub` namespace
   - Multiple notebook profiles (CPU Standard, CPU Large, GPU ML/AI)
   - LiteLLM integration for OpenAI SDK access in notebooks
@@ -92,6 +99,7 @@ After `pulumi up`, you'll get:
 - `litellmPublicUrl` - Public NLB URL for LiteLLM API (for external access)
 - `maasServiceUrl` - Internal cluster URL for MaaS app
 - `maasPublicUrl` - Public NLB URL for MaaS app
+- `rdsEndpoint` - RDS PostgreSQL endpoint for LiteLLM database
 - `jupyterhubNamespace` - JupyterHub Kubernetes namespace
 - `jupyterhubPublicUrl` - Public NLB URL for JupyterHub
 - `ecrLoginCommand` - AWS CLI command for Docker login
@@ -102,10 +110,13 @@ After `pulumi up`, you'll get:
 | Config Key | Description | Required |
 |------------|-------------|----------|
 | `appName` | Application name prefix | No (default: maas) |
+| `infra:vpcId` | VPC ID for RDS subnet group | Yes |
+| `infra:privateSubnetIds` | Private subnet IDs for RDS (JSON array) | Yes |
+| `infra:clusterSecurityGroupId` | EKS cluster security group ID for RDS ingress | Yes |
 
 ## Cost Calculation
 
-See [COST_CALCULATION.md](./COST_CALCULATION.md) for the methodology used to calculate per-token costs for self-hosted models. This includes:
+See [@COST_CALCULATION.md](./COST_CALCULATION.md) for the methodology used to calculate per-token costs for self-hosted models. This includes:
 - Infrastructure cost formulas based on GPU instance hourly rates
 - Input/output token cost differentiation (prefill vs decode phases)
 - Current model costs for LiteLLM chargeback configuration
