@@ -32,6 +32,10 @@ export interface MaaSComponentArgs {
      */
     litellmPassword?: pulumi.Input<string>;
     /**
+     * LiteLLM master key for admin API access
+     */
+    litellmMasterKey?: pulumi.Input<string>;
+    /**
      * JupyterHub API URL for notebook management (internal)
      */
     jupyterhubApiUrl?: pulumi.Input<string>;
@@ -215,7 +219,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
         const dbInstance = new aws.rds.Instance(`${name}-db`, {
             identifier: pulumi.interpolate`${namespaceName}-litellm`,
             engine: "postgres",
-            engineVersion: "16.4",
+            engineVersion: "16.12",
             instanceClass: "db.t4g.micro",
             allocatedStorage: 20,
             storageEncrypted: true,
@@ -235,20 +239,46 @@ export class MaaSComponent extends pulumi.ComponentResource {
 
         this.rdsEndpoint = dbInstance.endpoint;
 
+        // Create DB credentials secret for the Helm chart's db.secret reference
+        const dbCredentialsSecret = new k8s.core.v1.Secret(`${name}-db-credentials`, {
+            metadata: {
+                name: `${namespaceName}-litellm-db-credentials`,
+                namespace: namespaceName,
+            },
+            stringData: {
+                username: "litellm",
+                password: dbPassword.result,
+            },
+        }, { parent: this, dependsOn: [this.namespace] });
+
         // Deploy LiteLLM as the API gateway for model inference
         this.litellm = new k8s.helm.v3.Release(`${name}-litellm`, {
             chart: "oci://ghcr.io/berriai/litellm-helm",
             version: litellmChartVersion,
             namespace: namespaceName,
             values: {
-                db: { useExisting: true },
-                postgresql: { enabled: false },
+                // Use external RDS PostgreSQL - disable bundled PostgreSQL entirely
+                db: {
+                    deployStandalone: false,
+                    useExisting: true,
+                    endpoint: dbInstance.address,
+                    secret: {
+                        name: `${namespaceName}-litellm-db-credentials`,
+                        usernameKey: "username",
+                        passwordKey: "password",
+                    },
+                },
+                // Disable migrations job - LiteLLM will auto-migrate with DISABLE_SCHEMA_UPDATE=false
+                migrationJob: { enabled: false },
+                // Set explicit master key so PROXY_MASTER_KEY matches what MaaS app reads from the secret
+                masterkey: args.litellmMasterKey || "sk-litellm-master-key",
                 envVars: {
                     UI_USERNAME: args.litellmUsername || "admin",
                     UI_PASSWORD: args.litellmPassword || "admin",
                     STORE_MODEL_IN_DB: "True",
-                    DISABLE_SCHEMA_UPDATE: "true",
+                    DISABLE_SCHEMA_UPDATE: "false",
                     DATABASE_URL: databaseUrl,
+                    LITELLM_MASTER_KEY: args.litellmMasterKey || "sk-litellm-master-key",
                     LITELLM_SALT_KEY: saltKey.result,
                     WEBHOOK_URL: pulumi.interpolate`http://maas.${namespaceName}.svc.cluster.local/api/webhooks/budget`,
                 },
@@ -268,7 +298,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
                     },
                 },
             },
-        }, { parent: this, dependsOn: [this.namespace, dbInstance] });
+        }, { parent: this, dependsOn: [this.namespace, dbInstance, dbCredentialsSecret] });
 
         this.namespaceName = this.namespace.metadata.apply(m => m.name!);
         this.litellmReleaseName = this.litellm.name;
@@ -289,6 +319,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
                     "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
                     "service.beta.kubernetes.io/aws-load-balancer-type": "external",
                     "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
+                    "pulumi.com/skipAwait": "true",
                     ...(args.tags ? {
                         "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags": loadBalancerAdditionalTags,
                     } : {}),
