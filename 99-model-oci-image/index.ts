@@ -1,15 +1,17 @@
 import * as pulumi from "@pulumi/pulumi";
-import {EcrRepositoryComponent} from "./components/ecrRepositoryComponent";
-import {CodeBuildModelBuilderComponent} from "./components/codeBuildModelBuilderComponent";
+import {EcrRepositoryComponent} from "./src/components/ecrRepositoryComponent";
+import {CodeBuildModelBuilderComponent} from "./src/components/codeBuildModelBuilderComponent";
 
 const config = new pulumi.Config();
 const hfToken = config.getSecret("huggingface-token") || "";
+const owner = config.get("owner") || "dirien";
 
 const environment = pulumi.getStack();
 const tags = {
     Environment: environment,
     Project: "kserve-models",
     ManagedBy: "Pulumi",
+    Owner: owner,
 };
 
 // Meta Llama 3 8B Instruct
@@ -24,7 +26,7 @@ const llamaEcr = new EcrRepositoryComponent("meta-llama-3-8b-ecr", {
 
 const llamaBuilder = new CodeBuildModelBuilderComponent("meta-llama-3-8b-builder", {
     ecrRepositoryArn: llamaEcr.repositoryArn,
-    ecrRepositoryName: llamaEcr.repository.name,
+    ecrRepositoryName: llamaEcr.repositoryName,
     modelId: "meta-llama/Meta-Llama-3-8B-Instruct",
     imageTag: "latest",
     hfToken: hfToken,
@@ -43,7 +45,7 @@ const qwenEcr = new EcrRepositoryComponent("qwen3-8b-ecr", {
 
 const qwenBuilder = new CodeBuildModelBuilderComponent("qwen3-8b-builder", {
     ecrRepositoryArn: qwenEcr.repositoryArn,
-    ecrRepositoryName: qwenEcr.repository.name,
+    ecrRepositoryName: qwenEcr.repositoryName,
     modelId: "Qwen/Qwen3-8B",
     imageTag: "latest",
     hfToken: hfToken,
@@ -62,7 +64,7 @@ const qwen25Ecr = new EcrRepositoryComponent("qwen25-7b-ecr", {
 
 const qwen25Builder = new CodeBuildModelBuilderComponent("qwen25-7b-builder", {
     ecrRepositoryArn: qwen25Ecr.repositoryArn,
-    ecrRepositoryName: qwen25Ecr.repository.name,
+    ecrRepositoryName: qwen25Ecr.repositoryName,
     modelId: "Qwen/Qwen2.5-7B-Instruct",
     imageTag: "latest",
     hfToken: hfToken,
@@ -81,7 +83,7 @@ const gptOssEcr = new EcrRepositoryComponent("gpt-oss-20b-ecr", {
 
 const gptOssBuilder = new CodeBuildModelBuilderComponent("gpt-oss-20b-builder", {
     ecrRepositoryArn: gptOssEcr.repositoryArn,
-    ecrRepositoryName: gptOssEcr.repository.name,
+    ecrRepositoryName: gptOssEcr.repositoryName,
     modelId: "openai/gpt-oss-20b",
     imageTag: "latest",
     hfToken: hfToken,

@@ -11,7 +11,7 @@ Pulumi TypeScript project for EKS cluster with GPU support via Karpenter, EBS CS
 
 ### KarpenterNodePoolComponent
 
-Reusable component for creating Karpenter NodePools. Located in `karpenterNodePoolComponent.ts`.
+Reusable component for creating Karpenter NodePools. Located in `src/components/karpenterNodePoolComponent.ts`.
 
 **Required:**
 - `instanceTypes: string[]` - Instance types (e.g., `["g5.2xlarge"]`)
@@ -41,12 +41,12 @@ const gpuPool = new KarpenterNodePoolComponent("gpu-standard", {
         consolidationPolicy: "WhenEmpty",
         consolidateAfter: "1m",
     },
-}, { provider: kuebeconfigProvider });
+}, { provider: k8sProvider });
 ```
 
 ### KServeComponent
 
-Component for installing KServe v0.16 with all dependencies. Located in `kserveComponent.ts`.
+Component for installing KServe v0.16 with all dependencies. Located in `src/components/kserveComponent.ts`.
 
 **Installs:**
 - cert-manager (from Jetstack Helm repo)
@@ -56,9 +56,10 @@ Component for installing KServe v0.16 with all dependencies. Located in `kserveC
 - llmisvc-resources (LLMInferenceService controller and runtimes)
 
 **Args:**
-- `certManagerVersion?: string` - cert-manager version (default: `"v1.16.1"`)
+- `certManagerVersion?: string` - cert-manager version (default: `"v1.19.3"`)
 - `kserveVersion?: string` - KServe version (default: `"v0.16.0"`)
-- `deploymentMode?: "Standard" | "Serverless"` - Deployment mode (default: `"Standard"`)
+- `gatewayApiVersion?: string` - Gateway API CRDs version (default: `"v1.4.1"`)
+- `deploymentMode?: "RawDeployment" | "Serverless"` - Deployment mode (default: `"RawDeployment"`)
 - `storageInitializer?: StorageInitializerConfig` - Storage initializer resource config
 - `llmisvController?: LLMISvcControllerConfig` - LLMInferenceService controller resource config
 
@@ -77,9 +78,9 @@ Component for installing KServe v0.16 with all dependencies. Located in `kserveC
 **Example:**
 ```typescript
 const kserve = new KServeComponent("kserve", {
-    certManagerVersion: "v1.16.1",
+    certManagerVersion: "v1.19.3",
     kserveVersion: "v0.16.0",
-    deploymentMode: "Standard",
+    deploymentMode: "RawDeployment",
     storageInitializer: {
         memoryRequest: "16Gi",
         memoryLimit: "64Gi",
@@ -92,12 +93,12 @@ const kserve = new KServeComponent("kserve", {
         memoryRequest: "512Mi",
         memoryLimit: "2Gi",
     },
-}, { provider: kuebeconfigProvider, dependsOn: [gpuStandardNodePool] });
+}, { provider: k8sProvider, dependsOn: [gpuStandardNodePool] });
 ```
 
 ### LLMInferenceServiceComponent
 
-Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Located in `llmInferenceServiceComponent.ts`.
+Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Located in `src/components/llmInferenceServiceComponent.ts`.
 
 **Required:**
 - `modelUri: string` - Model URI (e.g., `"oci://...ecr.../kserve-models/qwen-qwen2-5-7b-instruct:latest"` or `"hf://Qwen/Qwen2.5-7B-Instruct"`)
@@ -108,7 +109,7 @@ Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Loca
 - `namespace?: string` - K8s namespace (default: `"default"`)
 - `replicas?: number` - Number of replicas (default: `1`)
 - `resources?: LLMResourceConfig` - CPU, memory, GPU resources
-- `args?: string[]` - Additional vLLM arguments (e.g., `--max_model_len`, `--gpu_memory_utilization`)
+- `args?: string[]` - Additional vLLM arguments (e.g., `--max_model_len`, `--gpu_memory_utilization`, `--enable-auto-tool-choice`, `--tool-call-parser`)
 - `env?: EnvVar[]` - Environment variables
 - `tolerations?: Toleration[]` - Pod tolerations
 - `startupProbe?: ProbeConfig` - Startup probe for slow-starting models (recommended for large context lengths)
@@ -116,21 +117,21 @@ Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Loca
 
 **Startup Probe (recommended for LLMs):**
 
-LLMs can take 5-10+ minutes to load depending on model size and context length. Use `startupProbe` to prevent premature pod restarts:
+LLMs can take 10-30+ minutes to load on cold EBS snapshot nodes (lazy block initialization + model loading + torch.compile + CUDA graph warmup). Use `startupProbe` to prevent premature pod restarts:
 
 ```typescript
 startupProbe: {
     initialDelaySeconds: 60,    // Wait before first probe
     periodSeconds: 30,          // Probe interval
     timeoutSeconds: 30,         // Probe timeout
-    failureThreshold: 20,       // Max failures (20*30s = 10 min)
+    failureThreshold: 60,       // Max failures (60*30s = 30 min)
 }
 ```
 
 **Example:**
 ```typescript
 const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
-    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen2-5-7b-instruct:latest",
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/qwen-qwen2-5-7b-instruct:latest`,
     modelName: "Qwen/Qwen2.5-7B-Instruct",
     storageType: "oci",
     namespace: "default",
@@ -145,14 +146,16 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
     args: [
         "--max_model_len=32768",  // Native context length for Qwen2.5
         "--gpu_memory_utilization=0.9",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser=hermes",
     ],
     startupProbe: {
         initialDelaySeconds: 60,
         periodSeconds: 30,
         timeoutSeconds: 30,
-        failureThreshold: 20,
+        failureThreshold: 60,
     },
-}, { provider: kuebeconfigProvider });
+}, { provider: k8sProvider });
 ```
 
 **Context Length Guidelines for A10G (24GB VRAM):**
@@ -165,7 +168,7 @@ const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
 
 ### ObservabilityComponent
 
-Reusable component for deploying a complete observability stack. Located in `observabilityComponent.ts`.
+Reusable component for deploying a complete observability stack. Located in `src/components/observabilityComponent.ts`.
 
 **Installs:**
 - Metrics Server (for HPA support)
@@ -190,7 +193,7 @@ const observability = new ObservabilityComponent("observability", {
     storageClassName: "gp3",
     metricsServer: { enabled: true, version: "3.13.0" },
     prometheusStack: {
-        version: "79.9.0",
+        version: "82.2.1",
         alertmanagerEnabled: false,
         storageSize: "50Gi",
     },
@@ -201,7 +204,7 @@ const observability = new ObservabilityComponent("observability", {
     },
     dcgmExporter: {
         enabled: true,
-        version: "4.6.0",
+        version: "4.8.1",
         // Use Karpenter GPU node label to only schedule on GPU nodes
         nodeSelector: { "karpenter.k8s.aws/instance-gpu-count": "1" },
         tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
@@ -222,6 +225,8 @@ pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
 
 Set via `pulumi config set`:
 - `clusterName` (required) - EKS cluster name
+- `ecrBaseUrl` (required for OCI models) - ECR registry base URL (e.g., `052848974346.dkr.ecr.us-east-1.amazonaws.com`)
+- `gpuSnapshotId` (recommended) - EBS snapshot ID with pre-cached container images for faster GPU node startup
 - `huggingface-token` (secret) - HuggingFace API token for model downloads
 
 ## Pulumi ESC Commands
@@ -292,9 +297,13 @@ curl http://localhost:8000/v1/chat/completions \
 
 Three NodePools are configured via Karpenter:
 
-- **general**: `m6i.large`, `m6i.xlarge`, etc. - For general workloads (observability, KServe controllers)
+- **general**: `m6i.large`, `m6i.xlarge`, `m7i.large`, `m7i.xlarge`, etc. (spot + on-demand) - For general workloads (observability, KServe controllers)
 - **gpu-standard**: `g5.xlarge`, `g5.2xlarge`, `g5.4xlarge` (A10G 24GB) - For 7B-13B models
 - **gpu-a100** (commented): `p4de.24xlarge` (8x A100 80GB) - For large MoE models (480B+)
+
+## Networking
+
+KServe's LLMInferenceService controller requires a Gateway API Gateway for networking reconciliation. A dummy `kserve-ingress-gateway` Gateway resource is created in the `kserve` namespace to satisfy this validation. Ingress creation is disabled (`disableIngressCreation: true`) since LiteLLM routes to models directly via Kubernetes service names.
 
 ## Infrastructure Components
 
@@ -304,6 +313,7 @@ Three NodePools are configured via Karpenter:
 - **gp3 StorageClass**: Default storage class for all persistent volumes
 - **Karpenter**: Manages GPU and general workload nodes with Bottlerocket AMI
 - **AWS Load Balancer Controller**: Manages ALB/NLB for Ingress and Service resources
+- **Gateway API CRDs**: Required by KServe's LLMInferenceService networking
 
 ## Gated Models
 

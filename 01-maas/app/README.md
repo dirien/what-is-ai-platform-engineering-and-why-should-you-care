@@ -7,7 +7,9 @@ A full-stack application for managing LLM models and Jupyter notebooks, providin
 - Model Discovery: Search and browse LLM models available through LiteLLM API
 - Notebook Management: View, start, and stop JupyterHub notebooks
 - API Key Management: Create, view, and manage LiteLLM API keys with per-key usage tracking
-- FinOps Dashboard: Track usage and costs across models with charts for spend visualization
+- Team Management: Create and manage teams with budget enforcement and spend tracking
+- FinOps Dashboard: Server-side spend aggregation via `/global/spend/report`, spend by model/key/team charts, date-filtered reporting
+- Budget Alerts: Webhook receiver for LiteLLM budget threshold notifications
 - Modern UI with Tailwind CSS and elegant light theme
 - Responsive tile-based layout
 - Fast and efficient API integration
@@ -104,19 +106,34 @@ The backend exposes the following endpoints:
 - `GET /api/model-info` - Get detailed model information with pricing
 - `GET /api/model-group-info` - Get model group information
 - `GET /api/public-model-hub` - Get published models only
+- `PUT /api/models/:modelId/pricing` - Update model pricing metadata
 
 ### API Keys
 - `GET /api/keys` - List all API keys
-- `POST /api/keys` - Create a new API key
-- `DELETE /api/keys/:key` - Delete an API key
+- `GET /api/keys/:token` - Get details for a specific key
+- `POST /api/keys` - Create a new API key (supports optional `team_id`)
+- `PUT /api/keys/:token` - Update an API key
+- `DELETE /api/keys/:token` - Delete an API key
+
+### Teams
+- `POST /api/teams` - Create a new team (with `team_alias`, `max_budget`, `budget_duration`)
+- `GET /api/teams` - List all teams
+- `GET /api/teams/:id` - Get team details
+- `PUT /api/teams/:id` - Update a team
+- `DELETE /api/teams/:id` - Delete a team
 
 ### FinOps / Spend Tracking
-- `GET /api/spend/logs` - Get spend logs with token usage (uses master key internally)
+- `GET /api/spend/report` - Server-side aggregated spend report (params: `start_date`, `end_date`, `group_by`)
+- `GET /api/spend/logs` - Get spend logs with token usage (params: `start_date`, `end_date`)
+
+### Webhooks
+- `POST /api/webhooks/budget` - Receives LiteLLM budget alert webhooks (`budget_crossed`, `threshold_crossed`, `projected_limit_exceeded`)
 
 ### Notebooks (JupyterHub)
 - `GET /api/notebooks` - List all running notebooks
-- `POST /api/notebooks/start` - Start a new notebook for a user
-- `DELETE /api/notebooks/:username` - Stop a user's notebook
+- `POST /api/notebooks` - Start a new notebook for a user
+- `DELETE /api/notebooks/:serverName` - Stop a user's notebook
+- `GET /api/notebooks/status` - Get notebook server status
 
 ## Project Structure
 

@@ -18,7 +18,7 @@ export interface AwsLbControllerComponentArgs {
 
     /**
      * AWS Load Balancer Controller Helm chart version
-     * @default "1.16.0"
+     * @default "3.0.0"
      */
     chartVersion?: string;
 
@@ -32,29 +32,35 @@ export interface AwsLbControllerComponentArgs {
      * AWS region
      */
     awsRegion: pulumi.Input<string>;
+
+    /**
+     * Tags to apply to taggable AWS resources managed by this component
+     */
+    tags?: pulumi.Input<Record<string, pulumi.Input<string>>>;
 }
 
 export class AwsLbControllerComponent extends pulumi.ComponentResource {
     /**
      * The controller IAM role
      */
-    public readonly controllerRole: aws.iam.Role;
+    private readonly controllerRole: aws.iam.Role;
 
     /**
      * The Pod Identity Association
      */
-    public readonly podIdentityAssociation: aws.eks.PodIdentityAssociation;
+    private readonly podIdentityAssociation: aws.eks.PodIdentityAssociation;
 
     /**
      * The Helm release
      */
-    public readonly helmRelease: k8s.helm.v3.Release;
+    private readonly helmRelease: k8s.helm.v3.Release;
 
     constructor(name: string, args: AwsLbControllerComponentArgs, opts?: pulumi.ComponentResourceOptions) {
         super("custom:infrastructure:AwsLbControllerComponent", name, args, opts);
 
-        const chartVersion = args.chartVersion || "1.16.0";
+        const chartVersion = args.chartVersion || "3.0.0";
         const namespace = args.namespace || "kube-system";
+        const tags = args.tags;
 
         // Create IAM Role with Pod Identity trust policy
         this.controllerRole = new aws.iam.Role(`${name}-role`, {
@@ -72,6 +78,7 @@ export class AwsLbControllerComponent extends pulumi.ComponentResource {
                     ],
                 }],
             }),
+            tags: tags,
         }, { parent: this });
 
         // Create IAM Policy for AWS Load Balancer Controller
@@ -324,6 +331,7 @@ export class AwsLbControllerComponent extends pulumi.ComponentResource {
                     }
                 ]
             })),
+            tags: tags,
         }, { parent: this });
 
         // Attach the policy to the role
@@ -338,6 +346,7 @@ export class AwsLbControllerComponent extends pulumi.ComponentResource {
             namespace: namespace,
             serviceAccount: "aws-load-balancer-controller",
             roleArn: this.controllerRole.arn,
+            tags: tags,
         }, { parent: this });
 
         // Install AWS Load Balancer Controller via Helm

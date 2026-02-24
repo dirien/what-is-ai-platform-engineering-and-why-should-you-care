@@ -95,7 +95,7 @@ const mistralBuilder = new CodeBuildModelBuilderComponent("mistral-7b-builder", 
 cd 99-model-oci-image
 
 # Install dependencies
-pulumi install
+npm install
 
 # Select stack
 pulumi stack select dev
@@ -124,7 +124,7 @@ After building, use the OCI URI in your LLMInferenceService (in `00-infrastructu
 
 ```typescript
 const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
-    modelUri: "oci://052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest",
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest`,
     modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
     storageType: "oci",  // Use OCI storage via Modelcars
     // ... other config
@@ -143,8 +143,8 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
 ## Files
 
 - `index.ts` - Pulumi infrastructure code with model configurations
-- `components/ecrRepositoryComponent.ts` - ECR repository component
-- `components/codeBuildModelBuilderComponent.ts` - CodeBuild project component
+- `src/components/ecrRepositoryComponent.ts` - ECR repository component
+- `src/components/codeBuildModelBuilderComponent.ts` - CodeBuild project component
 - `docker/Dockerfile` - Multi-stage Dockerfile
 - `docker/download_model.py` - Python script to download HF models
 - `docker/buildspec.yml` - AWS CodeBuild build specification

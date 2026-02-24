@@ -55,7 +55,7 @@ export class HuggingFaceStorageContainerComponent extends pulumi.ComponentResour
     /**
      * The ClusterStorageContainer custom resource
      */
-    public readonly storageContainer: k8s.apiextensions.CustomResource;
+    private readonly storageContainer: k8s.apiextensions.CustomResource;
 
     constructor(name: string, args: HuggingFaceStorageArgs, opts?: pulumi.ComponentResourceOptions) {
         super("kserve:index:HuggingFaceStorageContainerComponent", name, args, opts);
@@ -179,6 +179,61 @@ export interface LLMInferenceServiceConfigArgs {
 }
 
 /**
+ * Internal container spec for LLMInferenceService/Config templates
+ */
+interface LLMContainerSpec {
+    name: string;
+    resources: {
+        limits: Record<string, string>;
+        requests: Record<string, string>;
+    };
+    image?: pulumi.Input<string>;
+    args?: pulumi.Input<string>[];
+    env?: k8s.types.input.core.v1.EnvVar[];
+    livenessProbe?: {
+        httpGet: { path: string; port: number; scheme: string };
+        initialDelaySeconds: number;
+        periodSeconds: number;
+        timeoutSeconds: number;
+        failureThreshold: number;
+    };
+    startupProbe?: {
+        httpGet: { path: string; port: number; scheme: string };
+        initialDelaySeconds: number;
+        periodSeconds: number;
+        timeoutSeconds: number;
+        failureThreshold: number;
+    };
+}
+
+/**
+ * Internal template spec for LLMInferenceService/Config
+ */
+interface LLMTemplateSpec {
+    containers: LLMContainerSpec[];
+    tolerations?: k8s.types.input.core.v1.Toleration[];
+    serviceAccountName?: pulumi.Input<string>;
+}
+
+/**
+ * Internal spec shape for the LLMInferenceService CRD
+ */
+interface LLMInferenceServiceSpec {
+    model: {
+        uri: pulumi.Input<string>;
+        name: pulumi.Input<string>;
+    };
+    replicas: pulumi.Input<number>;
+    router: {
+        scheduler: Record<string, unknown>;
+        route: Record<string, unknown>;
+        gateway: Record<string, unknown>;
+    };
+    baseRefs?: { name: pulumi.Input<string> }[];
+    template?: LLMTemplateSpec;
+}
+
+/**
  * LLMInferenceServiceConfigComponent creates a reusable LLMInferenceServiceConfig
  * that can be referenced by multiple LLMInferenceServices via baseRefs.
  *
@@ -188,7 +243,7 @@ export class LLMInferenceServiceConfigComponent extends pulumi.ComponentResource
     /**
      * The LLMInferenceServiceConfig custom resource
      */
-    public readonly config: k8s.apiextensions.CustomResource;
+    private readonly config: k8s.apiextensions.CustomResource;
 
     /**
      * The name of the config
@@ -219,7 +274,7 @@ export class LLMInferenceServiceConfigComponent extends pulumi.ComponentResource
         ];
 
         // Build container spec
-        const containerSpec: any = {
+        const containerSpec: LLMContainerSpec = {
             name: "main",
             resources: {
                 limits: {
@@ -233,32 +288,16 @@ export class LLMInferenceServiceConfigComponent extends pulumi.ComponentResource
                     "nvidia.com/gpu": `${resources.gpuCount}`,
                 },
             },
+            ...(args.image ? { image: args.image } : {}),
+            ...(args.args && args.args.length > 0 ? { args: args.args } : {}),
+            ...(args.env && args.env.length > 0 ? { env: args.env } : {}),
         };
-
-        // Add custom image if specified
-        if (args.image) {
-            containerSpec.image = args.image;
-        }
-
-        // Add custom args if specified
-        if (args.args && args.args.length > 0) {
-            containerSpec.args = args.args;
-        }
-
-        // Add environment variables if specified
-        if (args.env && args.env.length > 0) {
-            containerSpec.env = args.env;
-        }
 
         // Build template spec
-        const templateSpec: any = {
+        const templateSpec: LLMTemplateSpec = {
             containers: [containerSpec],
+            ...(tolerations.length > 0 ? { tolerations } : {}),
         };
-
-        // Add tolerations if specified
-        if (tolerations.length > 0) {
-            templateSpec.tolerations = tolerations;
-        }
 
         // Create the LLMInferenceServiceConfig custom resource (v1alpha1)
         this.config = new k8s.apiextensions.CustomResource(`${name}-llmisvc-config`, {
@@ -409,7 +448,7 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
     /**
      * The LLMInferenceService custom resource
      */
-    public readonly llmInferenceService: k8s.apiextensions.CustomResource;
+    private readonly llmInferenceService: k8s.apiextensions.CustomResource;
 
     /**
      * The name of the LLMInferenceService
@@ -426,28 +465,11 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
 
         const namespace = args.namespace ?? "default";
 
-        // Build the spec
-        const spec: any = {
-            model: {
-                uri: args.modelUri,
-                name: args.modelName,
-            },
-            replicas: args.replicas ?? 1,
-            router: {
-                scheduler: {},  // Default scheduler with default load balancing
-                route: {},
-                gateway: {},
-            },
-        };
-
-        // Add baseRefs if provided (for configuration composition)
-        if (args.baseRefs && args.baseRefs.length > 0) {
-            spec.baseRefs = args.baseRefs.map(ref => ({ name: ref }));
-        }
-
-        // Build inline template overrides if any are provided
+        // Build inline template if any overrides are provided
         const hasInlineOverrides = args.resources || args.tolerations || args.env ||
                                    args.image || args.args || args.livenessProbe || args.startupProbe || args.serviceAccountName;
+
+        let template: LLMTemplateSpec | undefined;
 
         if (hasInlineOverrides) {
             // Default resource configuration
@@ -477,16 +499,17 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
             };
 
             // Default startup probe configuration (ideal for slow-starting LLMs)
-            // Allows up to 10 minutes for model loading (failureThreshold * periodSeconds)
+            // Allows up to 30 minutes for model loading + torch.compile + CUDA graph warmup
+            // Cold EBS snapshot nodes need extra time for lazy block initialization
             const startupProbe = {
-                initialDelaySeconds: args.startupProbe?.initialDelaySeconds ?? 30,
+                initialDelaySeconds: args.startupProbe?.initialDelaySeconds ?? 60,
                 periodSeconds: args.startupProbe?.periodSeconds ?? 30,
                 timeoutSeconds: args.startupProbe?.timeoutSeconds ?? 30,
-                failureThreshold: args.startupProbe?.failureThreshold ?? 20,  // 20 * 30s = 10 min max
+                failureThreshold: args.startupProbe?.failureThreshold ?? 60,  // 60 * 30s = 30 min max
             };
 
             // Build container spec
-            const containerSpec: any = {
+            const containerSpec: LLMContainerSpec = {
                 name: "main",
                 resources: {
                     limits: {
@@ -522,41 +545,36 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
                     timeoutSeconds: startupProbe.timeoutSeconds,
                     failureThreshold: startupProbe.failureThreshold,
                 },
+                ...(args.image ? { image: args.image } : {}),
+                ...(args.args && args.args.length > 0 ? { args: args.args } : {}),
+                ...(args.env && args.env.length > 0 ? { env: args.env } : {}),
             };
-
-            // Add custom image if specified
-            if (args.image) {
-                containerSpec.image = args.image;
-            }
-
-            // Add custom args if specified
-            if (args.args && args.args.length > 0) {
-                containerSpec.args = args.args;
-            }
-
-            // Add environment variables if specified
-            if (args.env && args.env.length > 0) {
-                containerSpec.env = args.env;
-            }
 
             // Build template spec
-            const templateSpec: any = {
+            template = {
                 containers: [containerSpec],
+                ...(tolerations.length > 0 ? { tolerations } : {}),
+                ...(args.serviceAccountName ? { serviceAccountName: args.serviceAccountName } : {}),
             };
-
-            // Add tolerations if specified
-            if (tolerations.length > 0) {
-                templateSpec.tolerations = tolerations;
-            }
-
-            // Add serviceAccountName if specified
-            // This allows the pod to access secrets referenced by the ServiceAccount
-            if (args.serviceAccountName) {
-                templateSpec.serviceAccountName = args.serviceAccountName;
-            }
-
-            spec.template = templateSpec;
         }
+
+        // Build the spec
+        const spec: LLMInferenceServiceSpec = {
+            model: {
+                uri: args.modelUri,
+                name: args.modelName,
+            },
+            replicas: args.replicas ?? 1,
+            router: {
+                scheduler: {},  // Default scheduler with default load balancing
+                route: {},
+                gateway: {},    // Managed mode - reads gateway name from inferenceservice-config
+            },
+            ...(args.baseRefs && args.baseRefs.length > 0
+                ? { baseRefs: args.baseRefs.map(ref => ({ name: ref })) }
+                : {}),
+            ...(template ? { template } : {}),
+        };
 
         // Create the LLMInferenceService custom resource (v1alpha1)
         this.llmInferenceService = new k8s.apiextensions.CustomResource(`${name}-llmisvc`, {

@@ -2,12 +2,12 @@
     "name": "99-model-oci-image",
     "main": "index.ts",
     "devDependencies": {
-        "@types/node": "^18",
-        "typescript": "^5.0.0"
+        "@types/node": "^25",
+        "typescript": "^5.9.3"
     },
     "dependencies": {
-        "@pulumi/aws": "^7.10.0",
-        "@pulumi/docker-build": "^0.0.8",
-        "@pulumi/pulumi": "^3.204.0"
+        "@pulumi/aws": "^7.20.0",
+        "@pulumi/docker-build": "^0.0.15",
+        "@pulumi/pulumi": "^3.223.0"
     }
 }

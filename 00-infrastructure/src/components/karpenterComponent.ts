@@ -23,7 +23,7 @@ export interface KarpenterComponentArgs {
 
     /**
      * Karpenter Helm chart version
-     * @default "1.8.2"
+     * @default "1.9.0"
      */
     karpenterVersion?: string;
 
@@ -42,6 +42,11 @@ export interface KarpenterComponentArgs {
      * AWS account ID
      */
     awsAccountId: pulumi.Input<string>;
+
+    /**
+     * Tags to apply to taggable AWS resources managed by this component
+     */
+    tags?: pulumi.Input<Record<string, pulumi.Input<string>>>;
 }
 
 /**
@@ -126,37 +131,93 @@ export interface BlockDeviceMapping {
     };
 }
 
+/**
+ * Internal spec shape for the EC2NodeClass CRD
+ */
+interface EC2NodeClassSpec {
+    amiFamily: string;
+    amiSelectorTerms: (AMISelectorTerm | { alias: string })[];
+    role: pulumi.Output<string>;
+    subnetSelectorTerms: { tags: Record<string, pulumi.Input<string>> }[];
+    securityGroupSelectorTerms: { tags: Record<string, pulumi.Input<string>> }[];
+    blockDeviceMappings: {
+        deviceName: string;
+        rootVolume?: boolean;
+        ebs: {
+            volumeSize: string;
+            volumeType: string;
+            iops?: number;
+            throughput?: number;
+            encrypted: boolean;
+            deleteOnTermination: boolean;
+            snapshotID?: string;
+        };
+    }[];
+    instanceStorePolicy?: "RAID0";
+    tags?: Record<string, string>;
+    userData?: string;
+}
+
 export class KarpenterComponent extends pulumi.ComponentResource {
+    /**
+     * The Karpenter controller IAM role ARN
+     */
+    public readonly controllerRoleArn: pulumi.Output<string>;
+
+    /**
+     * The Karpenter node IAM role ARN
+     */
+    public readonly nodeRoleArn: pulumi.Output<string>;
+
+    /**
+     * The Karpenter node IAM role name (used by EC2NodeClass)
+     */
+    public readonly nodeRoleName: pulumi.Output<string>;
+
+    /**
+     * The node instance profile ARN
+     */
+    public readonly nodeInstanceProfileArn: pulumi.Output<string>;
+
+    /**
+     * The EKS cluster name (stored for use in createEC2NodeClass)
+     */
+    private readonly clusterName: pulumi.Input<string>;
+
     /**
      * The Karpenter controller IAM role
      */
-    public readonly controllerRole: aws.iam.Role;
+    private readonly controllerRole: aws.iam.Role;
 
     /**
      * The Karpenter node IAM role
      */
-    public readonly nodeRole: aws.iam.Role;
+    private readonly nodeRole: aws.iam.Role;
 
     /**
      * The Karpenter Helm release
      */
-    public readonly helmRelease: k8s.helm.v3.Release;
+    private readonly helmRelease: k8s.helm.v3.Release;
 
     /**
      * The node instance profile
      */
-    public readonly nodeInstanceProfile: aws.iam.InstanceProfile;
+    private readonly nodeInstanceProfile: aws.iam.InstanceProfile;
 
     /**
      * The Pod Identity Association for Karpenter controller
      */
-    public readonly podIdentityAssociation: aws.eks.PodIdentityAssociation;
+    private readonly podIdentityAssociation: aws.eks.PodIdentityAssociation;
 
     constructor(name: string, args: KarpenterComponentArgs, opts?: pulumi.ComponentResourceOptions) {
         super("custom:infrastructure:KarpenterComponent", name, args, opts);
 
-        const karpenterVersion = args.karpenterVersion || "1.8.2";
+        const karpenterVersion = args.karpenterVersion || "1.9.0";
         const namespace = args.namespace || "kube-system";
+        const tags = args.tags;
+
+        // Store cluster name for use in createEC2NodeClass
+        this.clusterName = args.clusterName;
 
         // Get current AWS region and account
         const awsRegion = args.awsRegion;
@@ -181,12 +242,14 @@ export class KarpenterComponent extends pulumi.ComponentResource {
                 "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
                 "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
             ],
+            tags: tags,
         }, { parent: this });
 
         // Create instance profile for node role
         this.nodeInstanceProfile = new aws.iam.InstanceProfile(`${name}-node-instance-profile`, {
             name: pulumi.interpolate`KarpenterNodeInstanceProfile-${args.clusterName}`,
             role: this.nodeRole.name,
+            tags: tags,
         }, { parent: this });
 
         // Create Karpenter Controller Role with Pod Identity trust policy
@@ -205,6 +268,7 @@ export class KarpenterComponent extends pulumi.ComponentResource {
                     ],
                 }],
             }),
+            tags: tags,
         }, { parent: this });
 
         // Create Karpenter Controller Policy
@@ -441,6 +505,7 @@ export class KarpenterComponent extends pulumi.ComponentResource {
                     ],
                 })
             ),
+            tags: tags,
         }, { parent: this });
 
         // Attach the policy to the controller role
@@ -466,6 +531,7 @@ export class KarpenterComponent extends pulumi.ComponentResource {
             clusterName: args.clusterName,
             principalArn: this.nodeRole.arn,
             type: "EC2_LINUX",  // For Linux/Bottlerocket nodes managed by Karpenter
+            tags: tags,
         }, { parent: this });
 
         // Create Pod Identity Association for Karpenter controller
@@ -475,6 +541,7 @@ export class KarpenterComponent extends pulumi.ComponentResource {
             namespace: namespace,
             serviceAccount: "karpenter",
             roleArn: this.controllerRole.arn,
+            tags: tags,
         }, { parent: this });
 
         // Install Karpenter via Helm
@@ -526,20 +593,27 @@ export class KarpenterComponent extends pulumi.ComponentResource {
             },
         }, { parent: this, dependsOn: [this.podIdentityAssociation] });
 
+        // Derive public output properties from private resources
+        this.controllerRoleArn = this.controllerRole.arn;
+        this.nodeRoleArn = this.nodeRole.arn;
+        this.nodeRoleName = this.nodeRole.name;
+        this.nodeInstanceProfileArn = this.nodeInstanceProfile.arn;
+
         this.registerOutputs({
-            controllerRoleArn: this.controllerRole.arn,
-            nodeRoleArn: this.nodeRole.arn,
-            nodeInstanceProfileArn: this.nodeInstanceProfile.arn,
+            controllerRoleArn: this.controllerRoleArn,
+            nodeRoleArn: this.nodeRoleArn,
+            nodeRoleName: this.nodeRoleName,
+            nodeInstanceProfileArn: this.nodeInstanceProfileArn,
         });
     }
 
     /**
-     * Create an EC2NodeClass for Karpenter
+     * Create an EC2NodeClass for Karpenter.
+     * Uses the cluster name from the component constructor for subnet/security group discovery.
      */
     createEC2NodeClass(
         name: string,
         args: EC2NodeClassArgs,
-        clusterName: pulumi.Input<string>,
         opts?: pulumi.CustomResourceOptions
     ): k8s.apiextensions.CustomResource {
         const amiFamily = args.amiFamily || "Bottlerocket";
@@ -597,21 +671,21 @@ export class KarpenterComponent extends pulumi.ComponentResource {
             },
         ];
 
-        const spec: any = {
+        const spec: EC2NodeClassSpec = {
             amiFamily: amiFamily,
             amiSelectorTerms: amiSelectorTerms,
             role: this.nodeRole.name,
             subnetSelectorTerms: [
                 {
                     tags: {
-                        "karpenter.sh/discovery": clusterName,
+                        "karpenter.sh/discovery": this.clusterName,
                     },
                 },
             ],
             securityGroupSelectorTerms: [
                 {
                     tags: {
-                        "karpenter.sh/discovery": clusterName,
+                        "karpenter.sh/discovery": this.clusterName,
                     },
                 },
             ],
