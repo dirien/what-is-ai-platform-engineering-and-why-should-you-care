@@ -320,7 +320,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 Two node groups handle workloads:
 
-- **general** (Karpenter NodePool): `m6i.large`, `m6i.xlarge`, `m7i.large`, `m7i.xlarge`, etc. (spot + on-demand) - For general workloads (observability, KServe controllers)
+- **general** (Karpenter NodePool): `m6i.large`, `m6i.xlarge`, `m7i.large`, `m7i.xlarge`, etc. (on-demand) - For general workloads (observability, KServe controllers, JupyterHub)
 - **h100-mig-nodes** (EKS Managed Node Group): `p5.4xlarge` (H100 80GB with MIG 3g.40gb) - For LLM inference using MIG slices
 
 ## Networking

@@ -35,6 +35,8 @@ const Models = () => {
           detailedInfoMap[model.model_name] = {
             input_cost_per_token: model.model_info?.input_cost_per_token,
             output_cost_per_token: model.model_info?.output_cost_per_token,
+            input_cost_per_image: model.model_info?.input_cost_per_image,
+            output_cost_per_image: model.model_info?.output_cost_per_image,
             max_tokens: model.model_info?.max_tokens,
             max_input_tokens: model.model_info?.max_input_tokens,
             max_output_tokens: model.model_info?.max_output_tokens,
@@ -67,6 +69,8 @@ const Models = () => {
             // Override with detailed info if available (costs, tokens, etc.)
             input_cost_per_token: detailedInfo.input_cost_per_token ?? modelGroup.input_cost_per_token,
             output_cost_per_token: detailedInfo.output_cost_per_token ?? modelGroup.output_cost_per_token,
+            input_cost_per_image: detailedInfo.input_cost_per_image ?? modelGroup.input_cost_per_image,
+            output_cost_per_image: detailedInfo.output_cost_per_image ?? modelGroup.output_cost_per_image,
             max_tokens: detailedInfo.max_tokens ?? modelGroup.max_tokens,
             max_input_tokens: detailedInfo.max_input_tokens ?? modelGroup.max_input_tokens,
             max_output_tokens: detailedInfo.max_output_tokens ?? modelGroup.max_output_tokens,

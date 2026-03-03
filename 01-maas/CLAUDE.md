@@ -9,8 +9,9 @@ This folder contains the Model-as-a-Service (MaaS) platform for the AI Platform 
     - "Warm Sophistication" design theme with coral/terracotta primary colors
     - Cream backgrounds, sage accents, Inter + Plus Jakarta Sans typography
     - Component styles: cards, badges, buttons, tables defined in index.css
-    - **Notebooks page** for JupyterHub integration
+    - **Notebooks page** for JupyterHub integration (named servers, auto-polling, PVC cleanup)
     - **FinOps Dashboard** with server-side spend aggregation and team spend view
+    - Per-image pricing support for image generation models (e.g., Amazon Nova Canvas)
   - `backend/` - Express.js API server (port 3001)
     - JupyterHub API integration for notebook management
     - Team management CRUD endpoints
@@ -62,9 +63,10 @@ The `infra/` folder uses Pulumi TypeScript with components in `infra/src/compone
 
 - **JupyterHubComponent** (`src/components/jupyterhubComponent.ts`) - Deploys JupyterHub for notebook support:
   - Deploys to dedicated `jupyterhub` namespace
+  - Named servers (up to 5 per user) for multiple concurrent notebooks
   - Multiple notebook profiles (CPU Standard, CPU Large, GPU ML/AI)
   - LiteLLM integration for OpenAI SDK access in notebooks
-  - Persistent storage for user data
+  - Persistent storage with automatic PVC cleanup on notebook deletion (`KubeSpawner.delete_pvc: true` + per-server `pvcNameTemplate`)
   - Idle notebook culling
   - Internet-facing AWS NLB via Load Balancer Controller
 

@@ -130,7 +130,7 @@ interface SingleuserConfig {
     }[];
     storage: {
         capacity: string;
-        dynamic: { storageClass: string };
+        dynamic: { storageClass: string; pvcNameTemplate: string };
     };
     extraEnv: Record<string, pulumi.Input<string>>;
     image: { name: string; tag: string };
@@ -145,6 +145,7 @@ interface HubConfig {
     config: {
         JupyterHub: { admin_access: boolean };
         Authenticator: { admin_users: string[] };
+        KubeSpawner?: { delete_pvc: boolean };
     };
     services: Record<string, { api_token: pulumi.Output<string>; admin: boolean }>;
 }
@@ -326,6 +327,10 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
                 capacity: storageSize,
                 dynamic: {
                     storageClass: args.storageClassName || "gp3",
+                    // Explicit template with {servername} so KubeSpawner's _is_shared_pvc
+                    // check returns false and delete_pvc actually deletes per-server PVCs.
+                    // Default template uses {user_server} which KubeSpawner treats as shared.
+                    pvcNameTemplate: "claim-{username}--{servername}",
                 },
             },
             extraEnv: {
@@ -359,6 +364,10 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
                     admin_users: args.adminUsers || ["admin"],
                     // Allow any user with dummy authenticator for demo
                     // In production, configure proper auth (OAuth, LDAP, etc.)
+                },
+                KubeSpawner: {
+                    // Delete PVCs when a named server is removed via API (remove: true)
+                    delete_pvc: true,
                 },
             },
             // Define an API service for external applications (MaaS) to manage notebooks

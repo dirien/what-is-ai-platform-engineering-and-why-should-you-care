@@ -5,4 +5,4 @@ config:
   00-infrastructure:clusterName: demo-ai-idp-cluster
   00-infrastructure:ecrBaseUrl: 052848974346.dkr.ecr.us-east-1.amazonaws.com
   #00-infrastructure:h100SnapshotId: snap-098cecd2ccf5817c2
-  00-infrastructure:gpuSnapshotId: snap-032248884ae9d2bf5
+  00-infrastructure:gpuSnapshotId: snap-snap-097ed323f208b14ba

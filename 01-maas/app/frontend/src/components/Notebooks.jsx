@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 const profiles = [
@@ -43,6 +43,8 @@ const profiles = [
   }
 ];
 
+const POLL_INTERVAL = 5000; // 5 seconds
+
 const Notebooks = () => {
   const [notebooks, setNotebooks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -52,28 +54,37 @@ const Notebooks = () => {
   const [selectedProfile, setSelectedProfile] = useState('cpu-standard');
   const [notebookName, setNotebookName] = useState('');
   const [jupyterhubUrl, setJupyterhubUrl] = useState(null);
+  const [deletingServers, setDeletingServers] = useState(new Set());
 
-  useEffect(() => {
-    fetchNotebooks();
-  }, []);
-
-  const fetchNotebooks = async () => {
-    setLoading(true);
+  const fetchNotebooks = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     setError(null);
     try {
       const response = await axios.get('/api/notebooks');
       setNotebooks(response.data.notebooks || []);
       setJupyterhubUrl(response.data.jupyterhubUrl || null);
+      // Clear deleted servers that are no longer in the list
+      setDeletingServers(prev => {
+        const currentNames = new Set((response.data.notebooks || []).map(n => n.serverName));
+        const next = new Set([...prev].filter(s => currentNames.has(s)));
+        return next.size === prev.size ? prev : next;
+      });
     } catch (err) {
       console.error('Error fetching notebooks:', err);
-      // Don't show error for 503 (JupyterHub not ready) - just show empty state
       if (err.response?.status !== 503) {
         setError(err.response?.data?.error || err.message || 'Failed to fetch notebooks');
       }
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, []);
+
+  // Initial fetch with spinner + always-on 5s polling (same pattern as Agents)
+  useEffect(() => {
+    fetchNotebooks(true);
+    const interval = setInterval(fetchNotebooks, POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, [fetchNotebooks]);
 
   const createNotebook = async () => {
     setCreating(true);
@@ -84,7 +95,6 @@ const Notebooks = () => {
       });
 
       if (response.data.url) {
-        // Open notebook in new tab
         window.open(response.data.url, '_blank');
       }
 
@@ -99,13 +109,27 @@ const Notebooks = () => {
     }
   };
 
-  const stopNotebook = async (user, serverName) => {
+  const deleteNotebook = async (user, serverName) => {
+    // Optimistic: mark as deleting immediately
+    setDeletingServers(prev => new Set([...prev, serverName]));
     try {
       await axios.delete(`/api/notebooks/${encodeURIComponent(user)}/${encodeURIComponent(serverName)}`);
-      fetchNotebooks();
+      // Remove from local state immediately for snappy UX
+      setNotebooks(prev => prev.filter(n => n.serverName !== serverName));
+      setDeletingServers(prev => {
+        const next = new Set(prev);
+        next.delete(serverName);
+        return next;
+      });
     } catch (err) {
-      console.error('Error stopping notebook:', err);
-      setError(err.response?.data?.error || 'Failed to stop notebook');
+      console.error('Error deleting notebook:', err);
+      setError(err.response?.data?.error || 'Failed to delete notebook');
+      // Remove deleting state on error so user can retry
+      setDeletingServers(prev => {
+        const next = new Set(prev);
+        next.delete(serverName);
+        return next;
+      });
     }
   };
 
@@ -221,7 +245,7 @@ const Notebooks = () => {
         <div className="px-6 py-4 border-b border-charcoal-100 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-charcoal-900">Active Notebooks</h2>
           <button
-            onClick={fetchNotebooks}
+            onClick={() => fetchNotebooks(true)}
             className="btn-ghost flex items-center gap-2 text-sm"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -278,10 +302,18 @@ const Notebooks = () => {
                   )}
 
                   <button
-                    onClick={() => stopNotebook(notebook.user, notebook.serverName)}
-                    className="btn-ghost text-red-600 hover:text-red-700 hover:bg-red-50 text-sm"
+                    onClick={() => deleteNotebook(notebook.user, notebook.serverName)}
+                    disabled={deletingServers.has(notebook.serverName)}
+                    className="btn-ghost text-red-600 hover:text-red-700 hover:bg-red-50 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Stop
+                    {deletingServers.has(notebook.serverName) ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 border-2 border-red-300 border-t-red-600 rounded-full animate-spin"></span>
+                        Deleting...
+                      </span>
+                    ) : (
+                      'Delete'
+                    )}
                   </button>
                 </div>
               </div>

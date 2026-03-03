@@ -375,7 +375,7 @@ const generalNodeClass = karpenter.createEC2NodeClass("general-nodeclass", {
 const generalNodePool = new KarpenterNodePoolComponent("general", {
     nodeClassName: generalNodeClass.metadata.name,
     instanceTypes: ["m6i.large", "m6i.xlarge", "m6i.2xlarge", "m7i.large", "m7i.xlarge"],
-    capacityTypes: ["spot", "on-demand"],  // Use spot for cost savings
+    capacityTypes: ["on-demand"],  // On-demand only — stateful workloads (JupyterHub, Grafana, Prometheus) need stable nodes
     limits: {
         cpu: 100,
     },
