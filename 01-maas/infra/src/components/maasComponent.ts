@@ -60,10 +60,27 @@ export interface MaaSComponentArgs {
      */
     clusterSecurityGroupId: pulumi.Input<string>;
     /**
+     * EKS cluster name — required for Pod Identity associations
+     */
+    clusterName: pulumi.Input<string>;
+    /**
+     * AWS region for Bedrock API calls
+     * @default "us-east-1"
+     */
+    awsRegion?: pulumi.Input<string>;
+    /**
      * Whether to expose MaaS app via LoadBalancer
      * @default true
      */
     enableLoadBalancer?: boolean;
+    /**
+     * ACM certificate ARN for MaaS public HTTPS endpoint (NLB TLS listener on 443)
+     */
+    maasTlsCertificateArn?: pulumi.Input<string>;
+    /**
+     * Optional custom DNS hostname for MaaS public URL output (must point to the NLB)
+     */
+    maasPublicHostname?: pulumi.Input<string>;
     /**
      * Resource requests/limits for LiteLLM
      */
@@ -95,6 +112,48 @@ export interface MaaSComponentArgs {
      * Tags to apply to taggable AWS resources and load balancer artifacts
      */
     tags?: pulumi.Input<Record<string, pulumi.Input<string>>>;
+
+    /**
+     * Agent image reference for sandbox pods
+     */
+    agentImageRef?: pulumi.Input<string>;
+    /**
+     * Namespace where agent sandboxes are created
+     * @default "default"
+     */
+    agentNamespace?: pulumi.Input<string>;
+    /**
+     * StorageClass for agent workspace PVC
+     * @default "gp3"
+     */
+    agentWorkspaceStorageClass?: pulumi.Input<string>;
+    /**
+     * Requested size for agent workspace PVC
+     * @default "50Gi"
+     */
+    agentWorkspaceSize?: pulumi.Input<string>;
+    /**
+     * Sub-path inside workspace PVC mounted at /root
+     * @default ".home"
+     */
+    agentHomeSubPath?: pulumi.Input<string>;
+    /**
+     * Skill flavour bundles that can be pre-installed into agent workspaces.
+     * Each flavour becomes a ConfigMap in the agent namespace; the backend reads
+     * them at creation time and runs an init-skills container.
+     */
+    agentFlavours?: {
+        /** ConfigMap name suffix (must be DNS-safe) */
+        id: string;
+        /** Display name */
+        name: string;
+        /** Short description */
+        description: string;
+        /** Icon hint: code, cloud, frontend, devops, testing, general */
+        icon: string;
+        /** skills.sh identifiers (e.g. "anthropics/pulumi-typescript") */
+        skills: string[];
+    }[];
 }
 
 /**
@@ -143,6 +202,10 @@ export class MaaSComponent extends pulumi.ComponentResource {
      */
     public readonly publicUrl: pulumi.Output<string>;
     /**
+     * MaaS app load balancer host/IP (without scheme)
+     */
+    public readonly publicLoadBalancerHost: pulumi.Output<string>;
+    /**
      * LiteLLM release name
      */
     public readonly litellmReleaseName: pulumi.Output<string>;
@@ -157,6 +220,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
         const namespaceName = args.namespace || "maas";
         const litellmChartVersion = args.litellmChartVersion || "1.81.12-stable";
         const enableLoadBalancer = args.enableLoadBalancer ?? true;
+        const maasTlsEnabled = !!args.maasTlsCertificateArn;
         const withNameTag = (nameTag: pulumi.Input<string>) => pulumi.all([args.tags, nameTag]).apply(([resourceTags, name]) => ({
             ...(resourceTags || {}),
             Name: name,
@@ -251,12 +315,59 @@ export class MaaSComponent extends pulumi.ComponentResource {
             },
         }, { parent: this, dependsOn: [this.namespace] });
 
+        // IAM role for LiteLLM to invoke AWS Bedrock models via Pod Identity
+        const bedrockRole = new aws.iam.Role(`${name}-bedrock-role`, {
+            name: pulumi.interpolate`${namespaceName}-litellm-bedrock`,
+            assumeRolePolicy: JSON.stringify({
+                Version: "2012-10-17",
+                Statement: [{
+                    Effect: "Allow",
+                    Principal: { Service: "pods.eks.amazonaws.com" },
+                    Action: ["sts:AssumeRole", "sts:TagSession"],
+                }],
+            }),
+            tags: withNameTag(pulumi.interpolate`${namespaceName}-litellm-bedrock`),
+        }, { parent: this });
+
+        new aws.iam.RolePolicy(`${name}-bedrock-policy`, {
+            role: bedrockRole.name,
+            policy: JSON.stringify({
+                Version: "2012-10-17",
+                Statement: [{
+                    Effect: "Allow",
+                    Action: [
+                        "bedrock:InvokeModel",
+                        "bedrock:InvokeModelWithResponseStream",
+                    ],
+                    Resource: [
+                        "arn:aws:bedrock:*::foundation-model/anthropic.*",
+                        "arn:aws:bedrock:*:*:inference-profile/*anthropic*",
+                    ],
+                }],
+            }),
+        }, { parent: this });
+
+        new aws.eks.PodIdentityAssociation(`${name}-bedrock-pod-identity`, {
+            clusterName: args.clusterName,
+            namespace: namespaceName,
+            serviceAccount: "litellm",
+            roleArn: bedrockRole.arn,
+        }, { parent: this });
+
         // Deploy LiteLLM as the API gateway for model inference
+        // Fixed release name so the K8s service DNS is deterministic:
+        // litellm.<namespace>.svc.cluster.local:4000
         this.litellm = new k8s.helm.v3.Release(`${name}-litellm`, {
+            name: "litellm",
             chart: "oci://ghcr.io/berriai/litellm-helm",
             version: litellmChartVersion,
             namespace: namespaceName,
             values: {
+                // Dedicated service account for Pod Identity (Bedrock access)
+                serviceAccount: {
+                    create: true,
+                    name: "litellm",
+                },
                 // Use external RDS PostgreSQL - disable bundled PostgreSQL entirely
                 db: {
                     deployStandalone: false,
@@ -280,6 +391,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
                     DATABASE_URL: databaseUrl,
                     LITELLM_MASTER_KEY: args.litellmMasterKey || "sk-litellm-master-key",
                     LITELLM_SALT_KEY: saltKey.result,
+                    AWS_REGION_NAME: args.awsRegion || "us-east-1",
                     WEBHOOK_URL: pulumi.interpolate`http://maas.${namespaceName}.svc.cluster.local/api/webhooks/budget`,
                 },
                 masterConfig: {
@@ -319,7 +431,6 @@ export class MaaSComponent extends pulumi.ComponentResource {
                     "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
                     "service.beta.kubernetes.io/aws-load-balancer-type": "external",
                     "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
-                    "pulumi.com/skipAwait": "true",
                     ...(args.tags ? {
                         "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags": loadBalancerAdditionalTags,
                     } : {}),
@@ -368,6 +479,87 @@ export class MaaSComponent extends pulumi.ComponentResource {
                 },
             }, { parent: this, dependsOn: [this.namespace] });
         }
+
+        // ServiceAccount + RBAC for agent management (Sandbox CRDs, pods/exec)
+        const agentNamespace = args.agentNamespace || "default";
+
+        const serviceAccount = new k8s.core.v1.ServiceAccount(`${name}-sa`, {
+            metadata: {
+                name: "maas",
+                namespace: namespaceName,
+            },
+        }, { parent: this, dependsOn: [this.namespace] });
+
+        const agentClusterRole = new k8s.rbac.v1.ClusterRole(`${name}-agent-role`, {
+            metadata: {
+                name: "maas-agent-manager",
+            },
+            rules: [
+                {
+                    apiGroups: ["agents.x-k8s.io"],
+                    resources: ["sandboxes"],
+                    verbs: ["create", "delete", "get", "list", "watch"],
+                },
+                {
+                    apiGroups: [""],
+                    resources: ["pods"],
+                    verbs: ["get", "list"],
+                },
+                {
+                    apiGroups: [""],
+                    resources: ["pods/exec"],
+                    verbs: ["create", "get"],
+                },
+                {
+                    apiGroups: [""],
+                    resources: ["services"],
+                    verbs: ["create", "delete", "get", "list"],
+                },
+                {
+                    apiGroups: [""],
+                    resources: ["configmaps"],
+                    verbs: ["get", "list"],
+                },
+            ],
+        }, { parent: this });
+
+        const agentClusterRoleBinding = new k8s.rbac.v1.ClusterRoleBinding(`${name}-agent-binding`, {
+            metadata: {
+                name: "maas-agent-manager",
+            },
+            roleRef: {
+                apiGroup: "rbac.authorization.k8s.io",
+                kind: "ClusterRole",
+                name: agentClusterRole.metadata.name,
+            },
+            subjects: [{
+                kind: "ServiceAccount",
+                name: serviceAccount.metadata.name,
+                namespace: namespaceName,
+            }],
+        }, { parent: this, dependsOn: [serviceAccount, agentClusterRole] });
+
+        // Create ConfigMaps for each flavour definition so the backend can list them
+        const _flavourConfigMaps = (args.agentFlavours || []).map((flavour) => {
+            return new k8s.core.v1.ConfigMap(`${name}-flavour-${flavour.id}`, {
+                metadata: {
+                    name: `flavour-${flavour.id}`,
+                    namespace: agentNamespace,
+                    labels: {
+                        "agents.maas/flavour": "true",
+                        "app.kubernetes.io/managed-by": "pulumi",
+                    },
+                },
+                data: {
+                    spec: JSON.stringify({
+                        name: flavour.name,
+                        description: flavour.description,
+                        icon: flavour.icon,
+                        skills: flavour.skills,
+                    }),
+                },
+            }, { parent: this });
+        });
 
         // App labels
         const appLabels = { app: "maas" };
@@ -422,6 +614,36 @@ export class MaaSComponent extends pulumi.ComponentResource {
             });
         }
 
+        // Agent env vars
+        envVars.push({
+            name: "AGENT_NAMESPACE",
+            value: agentNamespace,
+        });
+        if (args.agentImageRef) {
+            envVars.push({
+                name: "AGENT_IMAGE",
+                value: args.agentImageRef,
+            });
+        }
+        if (args.agentWorkspaceStorageClass) {
+            envVars.push({
+                name: "AGENT_WORKSPACE_STORAGE_CLASS",
+                value: args.agentWorkspaceStorageClass,
+            });
+        }
+        if (args.agentWorkspaceSize) {
+            envVars.push({
+                name: "AGENT_WORKSPACE_SIZE",
+                value: args.agentWorkspaceSize,
+            });
+        }
+        if (args.agentHomeSubPath) {
+            envVars.push({
+                name: "AGENT_HOME_SUBPATH",
+                value: args.agentHomeSubPath,
+            });
+        }
+
         // Deploy the MaaS app
         this.appDeployment = new k8s.apps.v1.Deployment(`${name}-deployment`, {
             metadata: {
@@ -439,6 +661,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
                         labels: appLabels,
                     },
                     spec: {
+                        serviceAccountName: "maas",
                         containers: [{
                             name: "maas",
                             image: args.imageRef,
@@ -480,8 +703,8 @@ export class MaaSComponent extends pulumi.ComponentResource {
         }, {
             parent: this,
             dependsOn: jupyterhubApiSecret
-                ? [this.litellm, this.namespace, jupyterhubApiSecret]
-                : [this.litellm, this.namespace],
+                ? [this.litellm, this.namespace, jupyterhubApiSecret, serviceAccount, agentClusterRoleBinding]
+                : [this.litellm, this.namespace, serviceAccount, agentClusterRoleBinding],
         });
 
         // Create service for the MaaS app
@@ -496,6 +719,10 @@ export class MaaSComponent extends pulumi.ComponentResource {
                     "service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing",
                     "service.beta.kubernetes.io/aws-load-balancer-type": "external",
                     "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
+                    ...(maasTlsEnabled ? {
+                        "service.beta.kubernetes.io/aws-load-balancer-ssl-cert": args.maasTlsCertificateArn!,
+                        "service.beta.kubernetes.io/aws-load-balancer-ssl-ports": "443",
+                    } : {}),
                     ...(args.tags ? {
                         "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags": loadBalancerAdditionalTags,
                     } : {}),
@@ -504,27 +731,42 @@ export class MaaSComponent extends pulumi.ComponentResource {
             spec: {
                 type: enableLoadBalancer ? "LoadBalancer" : "ClusterIP",
                 selector: appLabels,
-                ports: [{
-                    port: 80,
-                    targetPort: 3001,
-                    protocol: "TCP",
-                    name: "http",
-                }],
+                ports: [
+                    {
+                        port: 80,
+                        targetPort: 3001,
+                        protocol: "TCP",
+                        name: "http",
+                    },
+                    ...(maasTlsEnabled ? [{
+                        port: 443,
+                        targetPort: 3001,
+                        protocol: "TCP",
+                        name: "https",
+                    }] : []),
+                ],
             },
         }, { parent: this, dependsOn: [this.namespace] });
 
         // Set output URLs
         this.appServiceUrl = pulumi.interpolate`http://maas.${namespaceName}.svc.cluster.local`;
+        this.publicLoadBalancerHost = this.appService.status.apply(status => {
+            const ingress = status?.loadBalancer?.ingress?.[0];
+            if (ingress?.hostname) {
+                return ingress.hostname;
+            } else if (ingress?.ip) {
+                return ingress.ip;
+            }
+            return `maas.${namespaceName}.svc.cluster.local`;
+        });
 
         if (enableLoadBalancer) {
-            this.publicUrl = this.appService.status.apply(status => {
-                const ingress = status?.loadBalancer?.ingress?.[0];
-                if (ingress?.hostname) {
-                    return `http://${ingress.hostname}`;
-                } else if (ingress?.ip) {
-                    return `http://${ingress.ip}`;
+            this.publicUrl = pulumi.all([this.publicLoadBalancerHost, args.maasPublicHostname]).apply(([lbHost, maasPublicHostname]) => {
+                const protocol = maasTlsEnabled ? "https" : "http";
+                if (maasPublicHostname) {
+                    return `${protocol}://${maasPublicHostname}`;
                 }
-                return `http://maas.${namespaceName}.svc.cluster.local`;
+                return `${protocol}://${lbHost}`;
             });
         } else {
             this.publicUrl = pulumi.interpolate`http://maas.${namespaceName}.svc.cluster.local`;
@@ -537,6 +779,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
             litellmPublicUrl: this.litellmPublicUrl,
             appServiceUrl: this.appServiceUrl,
             publicUrl: this.publicUrl,
+            publicLoadBalancerHost: this.publicLoadBalancerHost,
             rdsEndpoint: this.rdsEndpoint,
         });
     }

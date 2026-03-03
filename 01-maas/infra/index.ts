@@ -11,6 +11,12 @@ const config = new pulumi.Config();
 const appName = config.get("appName") || "maas";
 const environment = pulumi.getStack();
 const owner = config.get("owner") || "dirien";
+const maasTlsCertificateArn = config.get("maasTlsCertificateArn");
+const maasPublicHostname = config.get("maasPublicHostname");
+const enableMaaSCloudFront = config.getBoolean("enableMaaSCloudFront") ?? true;
+const agentWorkspaceStorageClass = config.get("agentWorkspaceStorageClass") || "gp3";
+const agentWorkspaceSize = config.get("agentWorkspaceSize") || "50Gi";
+const agentHomeSubPath = config.get("agentHomeSubPath") || ".home";
 
 // Infrastructure config (VPC, subnets, security groups - set via Pulumi config or ESC)
 const infraConfig = new pulumi.Config("infra");
@@ -93,6 +99,43 @@ const image = new dockerBuild.Image(`${appName}-image`, {
 });
 
 // =============================================================================
+// OpenCode Agent Image (ECR + Docker Build)
+// =============================================================================
+
+const agentEcr = new EcrRepositoryComponent(`${appName}-agent-ecr`, {
+    repositoryName: `${appName}-opencode`,
+    scanOnPush: true,
+    imageTagMutability: "MUTABLE",
+    imageRetentionCount: 10,
+    forceDelete: true,
+    tags: tags,
+});
+
+const agentAuthToken = aws.ecr.getAuthorizationTokenOutput({
+    registryId: agentEcr.registryId,
+});
+
+const agentImage = new dockerBuild.Image(`${appName}-agent-image`, {
+    tags: [
+        pulumi.interpolate`${agentEcr.repositoryUrl}:${environment}`,
+        pulumi.interpolate`${agentEcr.repositoryUrl}:latest`,
+    ],
+    context: {
+        location: "../images/opencode",
+    },
+    dockerfile: {
+        location: "../images/opencode/Dockerfile",
+    },
+    platforms: [dockerBuild.Platform.Linux_amd64],
+    push: true,
+    registries: [{
+        address: agentEcr.repositoryUrl,
+        username: agentAuthToken.userName,
+        password: pulumi.secret(agentAuthToken.password),
+    }],
+});
+
+// =============================================================================
 // JupyterHub Deployment
 // =============================================================================
 
@@ -101,8 +144,7 @@ const image = new dockerBuild.Image(`${appName}-image`, {
 const jupyterhub = new JupyterHubComponent("jupyterhub", {
     namespace: "jupyterhub",
     chartVersion: "4.3.2",
-    // LiteLLM URL will be updated after MaaS component is created
-    litellmServiceUrl: "http://maas-litellm.maas.svc.cluster.local:4000",
+    litellmServiceUrl: "http://litellm.maas.svc.cluster.local:4000",
     storageSize: "10Gi",
     idleTimeout: 3600, // 1 hour
     adminUsers: ["admin"],
@@ -157,7 +199,11 @@ const maas = new MaaSComponent("maas", {
     vpcId: infraConfig.require("vpcId"),
     privateSubnetIds: infraConfig.requireObject<string[]>("privateSubnetIds"),
     clusterSecurityGroupId: infraConfig.require("clusterSecurityGroupId"),
+    clusterName: infraConfig.require("clusterName"),
+    awsRegion: "us-east-1",
     enableLoadBalancer: true,
+    maasTlsCertificateArn: maasTlsCertificateArn || undefined,
+    maasPublicHostname: maasPublicHostname || undefined,
     litellmResources: {
         requests: {
             cpu: "500m",
@@ -178,8 +224,120 @@ const maas = new MaaSComponent("maas", {
             memory: "512Mi",
         },
     },
+    agentImageRef: agentImage.ref,
+    agentNamespace: "default",
+    agentWorkspaceStorageClass: agentWorkspaceStorageClass,
+    agentWorkspaceSize: agentWorkspaceSize,
+    agentHomeSubPath: agentHomeSubPath,
+    agentFlavours: [
+        {
+            id: "devops",
+            name: "DevOps",
+            description: "Docker, Kubernetes, CI/CD, Pulumi IaC, and infrastructure automation",
+            icon: "devops",
+            skills: [
+                "sickn33/antigravity-awesome-skills/docker-expert",
+                "wshobson/agents/github-actions-templates",
+                "wshobson/agents/helm-chart-scaffolding",
+                "jeffallan/claude-skills/kubernetes-specialist",
+                "dirien/claude-skills/pulumi-typescript",
+            ],
+        },
+        {
+            id: "typescript",
+            name: "TypeScript",
+            description: "Advanced types, testing, and TypeScript best practices",
+            icon: "code",
+            skills: [
+                "wshobson/agents/typescript-advanced-types",
+                "github/awesome-copilot/javascript-typescript-jest",
+                "sickn33/antigravity-awesome-skills/typescript-expert",
+                "bmad-labs/skills/typescript-e2e-testing",
+            ],
+        },
+    ],
     tags: tags,
-}, { provider: k8sProvider, dependsOn: [image, jupyterhub] });
+}, { provider: k8sProvider, dependsOn: [image, agentImage, jupyterhub] });
+
+// =============================================================================
+// MaaS CloudFront HTTPS Front Door (no custom domain required)
+// =============================================================================
+
+let maasCloudFrontDistribution: aws.cloudfront.Distribution | undefined;
+
+if (enableMaaSCloudFront) {
+    // Forward all request context to preserve WebSockets, SSE, and cookie-based sessions.
+    const maasOriginRequestPolicy = new aws.cloudfront.OriginRequestPolicy("maas-origin-request-policy", {
+        name: `${appName}-${environment}-maas-all-viewer`,
+        comment: "Forward all viewer headers/cookies/query strings for MaaS proxy traffic",
+        headersConfig: {
+            headerBehavior: "allViewer",
+        },
+        cookiesConfig: {
+            cookieBehavior: "all",
+        },
+        queryStringsConfig: {
+            queryStringBehavior: "all",
+        },
+    });
+
+    // Disable caching for interactive API/proxy traffic.
+    const maasNoCachePolicy = new aws.cloudfront.CachePolicy("maas-no-cache-policy", {
+        name: `${appName}-${environment}-maas-no-cache`,
+        comment: "No-cache policy for MaaS app and OpenCode proxy traffic",
+        defaultTtl: 0,
+        minTtl: 0,
+        maxTtl: 1,
+        parametersInCacheKeyAndForwardedToOrigin: {
+            enableAcceptEncodingBrotli: true,
+            enableAcceptEncodingGzip: true,
+            headersConfig: {
+                headerBehavior: "none",
+            },
+            cookiesConfig: {
+                cookieBehavior: "all",
+            },
+            queryStringsConfig: {
+                queryStringBehavior: "all",
+            },
+        },
+    });
+
+    maasCloudFrontDistribution = new aws.cloudfront.Distribution("maas-cloudfront", {
+        enabled: true,
+        isIpv6Enabled: true,
+        httpVersion: "http2and3",
+        priceClass: "PriceClass_100",
+        comment: `HTTPS front door for ${appName} (${environment})`,
+        origins: [{
+            domainName: maas.publicLoadBalancerHost,
+            originId: "maas-nlb-origin",
+            customOriginConfig: {
+                httpPort: 80,
+                httpsPort: 443,
+                originProtocolPolicy: "http-only",
+                originSslProtocols: ["TLSv1.2"],
+            },
+        }],
+        defaultCacheBehavior: {
+            targetOriginId: "maas-nlb-origin",
+            viewerProtocolPolicy: "redirect-to-https",
+            allowedMethods: ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"],
+            cachedMethods: ["GET", "HEAD", "OPTIONS"],
+            cachePolicyId: maasNoCachePolicy.id,
+            originRequestPolicyId: maasOriginRequestPolicy.id,
+            compress: true,
+        },
+        restrictions: {
+            geoRestriction: {
+                restrictionType: "none",
+            },
+        },
+        viewerCertificate: {
+            cloudfrontDefaultCertificate: true,
+        },
+    }, { dependsOn: [maas] });
+}
 
 // =============================================================================
 // Outputs
@@ -200,7 +358,14 @@ export const litellmReleaseName = maas.litellmReleaseName;
 export const litellmServiceUrl = maas.litellmServiceUrl;
 export const litellmPublicUrl = maas.litellmPublicUrl;
 export const maasServiceUrl = maas.appServiceUrl;
-export const maasPublicUrl = maas.publicUrl;
+export const maasLoadBalancerHost = maas.publicLoadBalancerHost;
+export const maasLoadBalancerUrl = maas.publicUrl;
+export const maasCloudFrontUrl = maasCloudFrontDistribution
+    ? pulumi.interpolate`https://${maasCloudFrontDistribution.domainName}`
+    : pulumi.output<string | undefined>(undefined);
+export const maasPublicUrl = maasCloudFrontDistribution
+    ? pulumi.interpolate`https://${maasCloudFrontDistribution.domainName}`
+    : maas.publicUrl;
 
 // RDS outputs
 export const rdsEndpoint = maas.rdsEndpoint;
@@ -209,6 +374,10 @@ export const rdsEndpoint = maas.rdsEndpoint;
 export const jupyterhubNamespace = jupyterhub.namespaceName;
 export const jupyterhubProxyUrl = pulumi.interpolate`http://proxy-public.jupyterhub.svc.cluster.local`;
 export const jupyterhubPublicUrl = jupyterhub.publicUrl;
+
+// Agent outputs
+export const agentEcrRepositoryUrl = agentEcr.repositoryUrl;
+export const agentImageRef = agentImage.ref;
 
 // Useful commands
 export const ecrLoginCommand = pulumi.interpolate`aws ecr get-login-password --region ${aws.getRegionOutput().name} | docker login --username AWS --password-stdin ${ecr.repositoryUrl}`;
