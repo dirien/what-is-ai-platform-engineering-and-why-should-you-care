@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { buildPricingMap, calculateSpend, formatCurrency, formatNumber } from '../utils/spend';
 import {
-  LineChart,
-  Line,
   BarChart,
   Bar,
   PieChart,
@@ -12,7 +11,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   Area,
   AreaChart
@@ -76,13 +74,15 @@ const FinOpsDashboard = () => {
         spendByTeamRes,
         spendLogsRes,
         modelInfoRes,
-        publicModelsRes
+        publicModelsRes,
+        teamsListRes
       ] = await Promise.all([
         axios.get('/api/spend/report', { params: { start_date, end_date, group_by: 'api_key' } }).catch(() => ({ data: [] })),
         axios.get('/api/spend/report', { params: { start_date, end_date, group_by: 'team' } }).catch(() => ({ data: [] })),
         axios.get('/api/spend/logs', { params: { start_date, end_date } }).catch(() => ({ data: [] })),
         axios.get('/api/model-info').catch(() => ({ data: { data: [] } })),
         axios.get('/api/public-model-hub').catch(() => ({ data: [] })),
+        axios.get('/api/teams').catch(() => ({ data: [] })),
       ]);
 
       // Parse spend logs for daily breakdown
@@ -102,6 +102,13 @@ const FinOpsDashboard = () => {
 
       // Get model info for pricing table
       const modelInfoData = modelInfoRes.data?.data || modelInfoRes.data || [];
+      const pricingMap = buildPricingMap(modelInfoData);
+
+      // Normalize logs with computed spend fallback (LiteLLM often returns spend=0 for self-hosted models)
+      const enrichedLogs = logs.map((log) => ({
+        ...log,
+        computedSpend: calculateSpend(log, pricingMap),
+      }));
 
       // Build summary from spend logs
       let totalSpend = 0;
@@ -109,8 +116,8 @@ const FinOpsDashboard = () => {
       let inputTokens = 0;
       let outputTokens = 0;
 
-      logs.forEach(log => {
-        totalSpend += log.spend || 0;
+      enrichedLogs.forEach(log => {
+        totalSpend += log.computedSpend || 0;
         totalTokens += log.total_tokens || log.usage?.total_tokens || 0;
         inputTokens += log.prompt_tokens || log.usage?.prompt_tokens || 0;
         outputTokens += log.completion_tokens || log.usage?.completion_tokens || 0;
@@ -121,12 +128,12 @@ const FinOpsDashboard = () => {
 
       // Group spend by day using ISO date keys for correct sorting
       const spendByDayMap = new Map();
-      logs.forEach(log => {
+      enrichedLogs.forEach(log => {
         const logDate = new Date(log.startTime || log.created_at || log.timestamp);
         const isoKey = logDate.toISOString().split('T')[0];
         const displayDate = logDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const existing = spendByDayMap.get(isoKey) || { isoKey, date: displayDate, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += log.spend || 0;
+        existing.spend += log.computedSpend || 0;
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByDayMap.set(isoKey, existing);
@@ -137,11 +144,11 @@ const FinOpsDashboard = () => {
 
       // Spend by model from logs (server-side report doesn't always have model breakdown)
       const spendByModelMap = new Map();
-      logs.forEach(log => {
+      enrichedLogs.forEach(log => {
         const model = log.model_group || log.model || log.model_id || 'Unknown';
         if (!publishedModelNames.has(model) && publishedModelNames.size > 0) return;
         const existing = spendByModelMap.get(model) || { model, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += log.spend || 0;
+        existing.spend += log.computedSpend || 0;
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByModelMap.set(model, existing);
@@ -151,8 +158,10 @@ const FinOpsDashboard = () => {
         .slice(0, 10);
 
       // Spend by key from report API
-      const spendByKeyData = Array.isArray(spendByKeyRes.data) ? spendByKeyRes.data : [];
-      const spendByKey = spendByKeyData
+      const spendByKeyData = Array.isArray(spendByKeyRes.data)
+        ? spendByKeyRes.data
+        : (Array.isArray(spendByKeyRes.data?.data) ? spendByKeyRes.data.data : []);
+      const spendByKeyFromReport = spendByKeyData
         .map(item => ({
           keyId: item.api_key || item.key || 'Unknown',
           keyName: item.key_alias || item.key_name || (item.api_key || '').substring(0, 16) + '...',
@@ -163,9 +172,35 @@ const FinOpsDashboard = () => {
         .sort((a, b) => b.spend - a.spend)
         .slice(0, 10);
 
+      // Fallback: derive key spend directly from logs when report API is unavailable
+      let spendByKey = spendByKeyFromReport;
+      if (spendByKey.length === 0 && enrichedLogs.length > 0) {
+        const spendByKeyMap = new Map();
+        enrichedLogs.forEach(log => {
+          const keyId = log.api_key || log.metadata?.user_api_key;
+          if (!keyId) return;
+          const existing = spendByKeyMap.get(keyId) || {
+            keyId,
+            keyName: log.metadata?.user_api_key_alias || `${String(keyId).substring(0, 16)}...`,
+            spend: 0,
+            requests: 0,
+            tokens: 0,
+          };
+          existing.spend += log.computedSpend || 0;
+          existing.requests += 1;
+          existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
+          spendByKeyMap.set(keyId, existing);
+        });
+        spendByKey = Array.from(spendByKeyMap.values())
+          .sort((a, b) => b.spend - a.spend)
+          .slice(0, 10);
+      }
+
       // Spend by team from report API
-      const spendByTeamData = Array.isArray(spendByTeamRes.data) ? spendByTeamRes.data : [];
-      const spendByTeam = spendByTeamData
+      const spendByTeamData = Array.isArray(spendByTeamRes.data)
+        ? spendByTeamRes.data
+        : (Array.isArray(spendByTeamRes.data?.data) ? spendByTeamRes.data.data : []);
+      const spendByTeamFromReport = spendByTeamData
         .map(item => ({
           teamId: item.team_id || 'Unknown',
           teamName: item.team_alias || item.team_id || 'Unknown',
@@ -175,16 +210,84 @@ const FinOpsDashboard = () => {
         .sort((a, b) => b.spend - a.spend)
         .slice(0, 10);
 
+      // Fallback: derive team spend from logs when report API is unavailable
+      let spendByTeam = spendByTeamFromReport;
+      if (spendByTeam.length === 0 && enrichedLogs.length > 0) {
+        const spendByTeamMap = new Map();
+        enrichedLogs.forEach(log => {
+          const teamId = log.team_id || log.metadata?.user_api_key_team_id;
+          if (!teamId) return;
+          const existing = spendByTeamMap.get(teamId) || {
+            teamId,
+            teamName: log.metadata?.user_api_key_team_alias || teamId,
+            spend: 0,
+            requests: 0,
+          };
+          existing.spend += log.computedSpend || 0;
+          existing.requests += 1;
+          spendByTeamMap.set(teamId, existing);
+        });
+        spendByTeam = Array.from(spendByTeamMap.values())
+          .sort((a, b) => b.spend - a.spend)
+          .slice(0, 10);
+      }
+
+      // Build team budget map from /api/teams
+      const teamsListData = Array.isArray(teamsListRes.data) ? teamsListRes.data : (teamsListRes.data?.data || []);
+      const teamBudgetMap = new Map();
+      teamsListData.forEach(t => {
+        if (t.team_id) {
+          teamBudgetMap.set(t.team_id, {
+            maxBudget: t.max_budget,
+            budgetDuration: t.budget_duration,
+            teamAlias: t.team_alias,
+          });
+        }
+      });
+
+      // Enrich spendByTeam with budget info
+      spendByTeam = spendByTeam.map(t => {
+        const budget = teamBudgetMap.get(t.teamId);
+        return {
+          ...t,
+          teamName: budget?.teamAlias || t.teamName,
+          maxBudget: budget?.maxBudget ?? null,
+          budgetDuration: budget?.budgetDuration ?? null,
+        };
+      });
+
+      // Add teams that have budgets but no spend data
+      for (const [teamId, budget] of teamBudgetMap) {
+        if (!spendByTeam.some(t => t.teamId === teamId)) {
+          spendByTeam.push({
+            teamId,
+            teamName: budget.teamAlias || teamId,
+            spend: 0,
+            requests: 0,
+            maxBudget: budget.maxBudget ?? null,
+            budgetDuration: budget.budgetDuration ?? null,
+          });
+        }
+      }
+
       // Model pricing table
       const modelPricing = modelInfoData
         .filter(m => publishedModelNames.has(m.model_name) || publishedModelNames.size === 0)
-        .map(m => ({
-          name: m.model_name,
-          inputCost: (m.model_info?.input_cost_per_token || 0) * 1000000,
-          outputCost: (m.model_info?.output_cost_per_token || 0) * 1000000,
-          description: m.model_info?.description || '',
-          provider: m.litellm_params?.model?.split('/')[0] || m.model_info?.litellm_provider || 'custom'
-        }));
+        .map(m => {
+          const isImageGen = m.model_info?.mode === 'image_generation';
+          return {
+            name: m.model_name,
+            isImageGen,
+            inputCost: isImageGen
+              ? (m.model_info?.input_cost_per_image || 0)
+              : (m.model_info?.input_cost_per_token || 0) * 1000000,
+            outputCost: isImageGen
+              ? (m.model_info?.output_cost_per_image || 0)
+              : (m.model_info?.output_cost_per_token || 0) * 1000000,
+            description: m.model_info?.description || '',
+            provider: m.litellm_params?.model?.split('/')[0] || m.model_info?.litellm_provider || 'custom',
+          };
+        });
 
       // Tokens by model for pie chart
       const tokensByModel = spendByModel.map(m => ({
@@ -228,17 +331,6 @@ const FinOpsDashboard = () => {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  const formatCurrency = (value) => {
-    if (value >= 1) return `$${value.toFixed(2)}`;
-    if (value >= 0.01) return `$${value.toFixed(4)}`;
-    return `$${value.toFixed(6)}`;
-  };
-
-  const formatNumber = (value) => {
-    if (value >= 1000000) return `${(value / 1000000).toFixed(2)}M`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
-    return value.toLocaleString();
-  };
 
   if (loading) {
     return (
@@ -567,30 +659,63 @@ const FinOpsDashboard = () => {
         </div>
       </div>
 
-      {/* Spend by Team */}
+      {/* Team Budget Utilization */}
       {spendByTeam && spendByTeam.length > 0 && (
         <div className="bg-white rounded-2xl p-6 shadow-soft border border-charcoal-100/50 mb-8">
           <h3 className="text-lg font-semibold text-charcoal-900 mb-4 flex items-center gap-2">
             <svg className="h-5 w-5 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" />
             </svg>
-            Spend by Team
+            Team Budget Utilization
           </h3>
-          <ResponsiveContainer width="100%" height={Math.max(200, spendByTeam.length * 50)}>
-            <BarChart data={spendByTeam} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-              <XAxis type="number" tick={{ fontSize: 12 }} stroke="#6B7280" tickFormatter={(v) => `$${v.toFixed(2)}`} />
-              <YAxis dataKey="teamName" type="category" tick={{ fontSize: 11 }} stroke="#6B7280" width={120} />
-              <Tooltip
-                formatter={(value, name) => {
-                  if (name === 'spend') return [`$${value.toFixed(4)}`, 'Spend'];
-                  return [value, name];
-                }}
-                contentStyle={{ borderRadius: '12px', border: '1px solid #E5E7EB' }}
-              />
-              <Bar dataKey="spend" fill="#3D405B" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          <div className="space-y-4">
+            {spendByTeam.map((team) => {
+              const hasBudget = team.maxBudget != null && team.maxBudget > 0;
+              const utilization = hasBudget ? Math.min((team.spend / team.maxBudget) * 100, 100) : null;
+              const barColor = utilization === null
+                ? 'bg-charcoal-300'
+                : utilization >= 90
+                  ? 'bg-red-500'
+                  : utilization >= 70
+                    ? 'bg-amber-500'
+                    : 'bg-sage-500';
+
+              return (
+                <div key={team.teamId} className="py-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm font-semibold text-charcoal-900">{team.teamName}</span>
+                    <div className="flex items-center gap-2">
+                      {hasBudget ? (
+                        <span className="text-sm text-charcoal-600">
+                          {formatCurrency(team.spend)} / {formatCurrency(team.maxBudget)}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-charcoal-400">{formatCurrency(team.spend)}</span>
+                      )}
+                      {team.budgetDuration && (
+                        <span className="badge badge-neutral text-xs">{team.budgetDuration}</span>
+                      )}
+                    </div>
+                  </div>
+                  {hasBudget ? (
+                    <div className="w-full bg-charcoal-100 rounded-full h-2.5">
+                      <div
+                        className={`h-2.5 rounded-full transition-all ${barColor}`}
+                        style={{ width: `${utilization}%` }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-charcoal-100 rounded-full h-2.5">
+                        <div className="h-2.5 rounded-full bg-charcoal-300" style={{ width: '100%' }} />
+                      </div>
+                      <span className="text-xs text-charcoal-400 whitespace-nowrap">No budget set</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -601,7 +726,6 @@ const FinOpsDashboard = () => {
             <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z" />
           </svg>
           Model Pricing
-          <span className="ml-2 text-xs font-normal text-charcoal-400">(per 1M tokens)</span>
         </h3>
         {modelPricing.length > 0 ? (
           <div className="overflow-x-auto">
@@ -616,7 +740,7 @@ const FinOpsDashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {modelPricing.map((model, index) => (
+                {modelPricing.map((model) => (
                   <tr key={model.name} className="border-b border-charcoal-50 hover:bg-cream-50">
                     <td className="py-3 px-4">
                       <span className="font-semibold text-charcoal-900">{model.name}</span>
@@ -625,10 +749,16 @@ const FinOpsDashboard = () => {
                       <span className="badge badge-neutral capitalize">{model.provider}</span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <span className="font-mono text-sage-600">${model.inputCost.toFixed(2)}</span>
+                      <span className="font-mono text-sage-600">
+                        ${model.inputCost.toFixed(2)}
+                        <span className="text-xs text-charcoal-400 ml-1">{model.isImageGen ? '/img' : '/1M'}</span>
+                      </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <span className="font-mono text-primary-600">${model.outputCost.toFixed(2)}</span>
+                      <span className="font-mono text-primary-600">
+                        ${model.outputCost.toFixed(2)}
+                        <span className="text-xs text-charcoal-400 ml-1">{model.isImageGen ? '/img' : '/1M'}</span>
+                      </span>
                     </td>
                     <td className="py-3 px-4 text-charcoal-500 text-sm max-w-xs truncate">
                       {model.description || '-'}

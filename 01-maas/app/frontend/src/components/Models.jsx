@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import ModelCard from './ModelCard';
 import ModelDetailModal from './ModelDetailModal';
@@ -35,6 +35,8 @@ const Models = () => {
           detailedInfoMap[model.model_name] = {
             input_cost_per_token: model.model_info?.input_cost_per_token,
             output_cost_per_token: model.model_info?.output_cost_per_token,
+            input_cost_per_image: model.model_info?.input_cost_per_image,
+            output_cost_per_image: model.model_info?.output_cost_per_image,
             max_tokens: model.model_info?.max_tokens,
             max_input_tokens: model.model_info?.max_input_tokens,
             max_output_tokens: model.model_info?.max_output_tokens,
@@ -67,6 +69,8 @@ const Models = () => {
             // Override with detailed info if available (costs, tokens, etc.)
             input_cost_per_token: detailedInfo.input_cost_per_token ?? modelGroup.input_cost_per_token,
             output_cost_per_token: detailedInfo.output_cost_per_token ?? modelGroup.output_cost_per_token,
+            input_cost_per_image: detailedInfo.input_cost_per_image ?? modelGroup.input_cost_per_image,
+            output_cost_per_image: detailedInfo.output_cost_per_image ?? modelGroup.output_cost_per_image,
             max_tokens: detailedInfo.max_tokens ?? modelGroup.max_tokens,
             max_input_tokens: detailedInfo.max_input_tokens ?? modelGroup.max_input_tokens,
             max_output_tokens: detailedInfo.max_output_tokens ?? modelGroup.max_output_tokens,
@@ -89,10 +93,13 @@ const Models = () => {
     }
   };
 
-  const filteredModels = models.filter(model => {
+  const handleModelClick = useCallback((model) => setSelectedModel(model), []);
+  const handleCloseDetail = useCallback(() => setSelectedModel(null), []);
+
+  const filteredModels = useMemo(() => models.filter(model => {
     const modelId = model.id || '';
     return modelId.toLowerCase().includes(searchTerm.toLowerCase());
-  });
+  }), [models, searchTerm]);
 
   if (loading) {
     return (
@@ -198,7 +205,7 @@ const Models = () => {
               key={model.id || index}
               model={model}
               info={modelInfo[model.id]}
-              onClick={() => setSelectedModel(model)}
+              onClick={handleModelClick}
             />
           ))}
         </div>
@@ -209,7 +216,7 @@ const Models = () => {
         <ModelDetailModal
           model={selectedModel}
           info={modelInfo[selectedModel.id]}
-          onClose={() => setSelectedModel(null)}
+          onClose={handleCloseDetail}
         />
       )}
     </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const ModelDetailModal = ({ model, info, onClose }) => {
@@ -27,10 +27,13 @@ const ModelDetailModal = ({ model, info, onClose }) => {
 
   // Get model info - from the info object which contains public model hub data
   const mode = info?.mode || 'chat';
+  const isImageGen = mode === 'image_generation';
   const maxInputTokens = info?.max_input_tokens;
   const maxOutputTokens = info?.max_output_tokens;
   const inputCostPerToken = info?.input_cost_per_token || 0;
   const outputCostPerToken = info?.output_cost_per_token || 0;
+  const inputCostPerImage = info?.input_cost_per_image || 0;
+  const outputCostPerImage = info?.output_cost_per_image || 0;
   const supportedOpenAIParams = info?.supported_openai_params || [];
   const providers = info?.providers || [ownedBy];
 
@@ -67,7 +70,28 @@ const ModelDetailModal = ({ model, info, onClose }) => {
   const provider = getProvider();
 
   // Generate Python usage example with the actual LiteLLM URL
-  const pythonUsageExample = `import openai
+  const pythonUsageExample = isImageGen
+    ? `import openai
+import base64
+
+client = openai.OpenAI(
+    api_key="your_api_key",
+    base_url="${litellmUrl}"
+)
+
+response = client.images.generate(
+    model="${modelId}",
+    prompt="A futuristic city skyline at sunset",
+    size="1024x1024",
+    n=1
+)
+
+# Save the generated image
+img_data = base64.b64decode(response.data[0].b64_json)
+with open("output.png", "wb") as f:
+    f.write(img_data)
+print("Image saved to output.png")`
+    : `import openai
 
 client = openai.OpenAI(
     api_key="your_api_key",
@@ -109,11 +133,11 @@ print(response.choices[0].message.content)`;
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-        <div className="fixed inset-0 transition-opacity bg-charcoal-900/40 backdrop-blur-sm" aria-hidden="true"></div>
+        <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         <div
-          className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
+          className="relative z-10 inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-3xl sm:w-full"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Accent bar */}
@@ -181,27 +205,48 @@ print(response.choices[0].message.content)`;
                   <svg className="h-4 w-4 mr-2 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  Token & Cost Information
+                  {isImageGen ? 'Pricing' : 'Token & Cost Information'}
                 </h4>
                 <div className="bg-cream-100 rounded-xl p-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <span className="text-sm font-medium text-charcoal-500 block mb-1">Max Input Tokens:</span>
-                      <span className="text-sm text-charcoal-900">{maxInputTokens ? maxInputTokens.toLocaleString() : 'Not specified'}</span>
+                  {isImageGen ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Max Prompt Length:</span>
+                        <span className="text-sm text-charcoal-900">{maxInputTokens ? `${maxInputTokens.toLocaleString()} chars` : 'Not specified'}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Output:</span>
+                        <span className="text-sm text-charcoal-900">1024x1024 - 2048x2048</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Input Cost per Image:</span>
+                        <span className="text-sm text-charcoal-900 font-semibold">{formatCost(inputCostPerImage)}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Output Cost per Image:</span>
+                        <span className="text-sm text-charcoal-900 font-semibold">{formatCost(outputCostPerImage)}</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-sm font-medium text-charcoal-500 block mb-1">Max Output Tokens:</span>
-                      <span className="text-sm text-charcoal-900">{maxOutputTokens ? maxOutputTokens.toLocaleString() : 'Not specified'}</span>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Max Input Tokens:</span>
+                        <span className="text-sm text-charcoal-900">{maxInputTokens ? maxInputTokens.toLocaleString() : 'Not specified'}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Max Output Tokens:</span>
+                        <span className="text-sm text-charcoal-900">{maxOutputTokens ? maxOutputTokens.toLocaleString() : 'Not specified'}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Input Cost per 1M Tokens:</span>
+                        <span className="text-sm text-charcoal-900 font-semibold">{formatCost(inputCostPer1M)}</span>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-charcoal-500 block mb-1">Output Cost per 1M Tokens:</span>
+                        <span className="text-sm text-charcoal-900 font-semibold">{formatCost(outputCostPer1M)}</span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-sm font-medium text-charcoal-500 block mb-1">Input Cost per 1M Tokens:</span>
-                      <span className="text-sm text-charcoal-900 font-semibold">{formatCost(inputCostPer1M)}</span>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium text-charcoal-500 block mb-1">Output Cost per 1M Tokens:</span>
-                      <span className="text-sm text-charcoal-900 font-semibold">{formatCost(outputCostPer1M)}</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
 

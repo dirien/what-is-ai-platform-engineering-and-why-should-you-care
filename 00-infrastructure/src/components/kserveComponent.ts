@@ -108,6 +108,12 @@ export interface KServeComponentArgs {
      * Increase limits when managing many LLMInferenceService resources
      */
     llmisvController?: LLMISvcControllerConfig;
+
+    /**
+     * Version of LeaderWorkerSet (LWS) to install
+     * @default "0.7.0"
+     */
+    lwsVersion?: string;
 }
 
 /**
@@ -149,6 +155,11 @@ export class KServeComponent extends pulumi.ComponentResource {
      * The LLMInferenceService resources Helm release (controller and runtimes for LLM features)
      */
     private readonly llmisvResources: k8s.helm.v3.Release;
+
+    /**
+     * The LeaderWorkerSet (LWS) Helm release for multi-node inference
+     */
+    private readonly lws: k8s.helm.v3.Release;
 
     /**
      * The KServe namespace name
@@ -230,6 +241,24 @@ export class KServeComponent extends pulumi.ComponentResource {
             waitForJobs: true,
         }, { parent: this, dependsOn: [certManagerNamespace] });
 
+        const lwsVersion = args.lwsVersion ?? "0.7.0";
+
+        // Create LWS namespace
+        const lwsNamespace = new k8s.core.v1.Namespace(`${name}-lws-ns`, {
+            metadata: {
+                name: "lws-system",
+            },
+        }, { parent: this });
+
+        // Install LeaderWorkerSet (LWS) for multi-node inference
+        this.lws = new k8s.helm.v3.Release(`${name}-lws`, {
+            name: "lws",
+            chart: "oci://registry.k8s.io/lws/charts/lws",
+            version: lwsVersion,
+            namespace: lwsNamespace.metadata.name,
+            waitForJobs: true,
+        }, { parent: this, dependsOn: [this.certManager, lwsNamespace] });
+
         // Create KServe namespace
         this.kserveNamespace = new k8s.core.v1.Namespace(`${name}-kserve-ns`, {
             metadata: {
@@ -287,7 +316,7 @@ export class KServeComponent extends pulumi.ComponentResource {
                     annotations: {
                         "pulumi.com/patchForce": "true",
                         "meta.helm.sh/release-name": "llmisvc-resources",
-                        "meta.helm.sh/release-namespace": "kserve",
+                        "meta.helm.sh/release-namespace": this.kserveNamespace.metadata.name,
                     },
                     labels: {
                         "app.kubernetes.io/managed-by": "Helm",
@@ -325,7 +354,7 @@ export class KServeComponent extends pulumi.ComponentResource {
                     },
                 },
             },
-        }, { parent: this, dependsOn: [this.llmisvCrd, configMapOwnershipPatch] });
+        }, { parent: this, dependsOn: [this.llmisvCrd, configMapOwnershipPatch, this.lws] });
 
         // Patch the inferenceservice-config ConfigMap with storage initializer settings
         // This overrides the defaults set by the llmisvc-resources Helm chart
@@ -383,7 +412,7 @@ export class KServeComponent extends pulumi.ComponentResource {
             kind: "Gateway",
             metadata: {
                 name: "kserve-ingress-gateway",
-                namespace: "kserve",
+                namespace: this.kserveNamespace.metadata.name,
             },
             spec: {
                 gatewayClassName: "kserve-gateway",
@@ -409,6 +438,7 @@ export class KServeComponent extends pulumi.ComponentResource {
             kserveReleaseName: this.kserve.name,
             llmisvCrdReleaseName: this.llmisvCrd.name,
             llmisvResourcesReleaseName: this.llmisvResources.name,
+            lwsReleaseName: this.lws.name,
             namespaceName: this.namespaceName,
         });
     }

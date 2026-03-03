@@ -130,7 +130,7 @@ interface SingleuserConfig {
     }[];
     storage: {
         capacity: string;
-        dynamic: { storageClass: string };
+        dynamic: { storageClass: string; pvcNameTemplate: string };
     };
     extraEnv: Record<string, pulumi.Input<string>>;
     image: { name: string; tag: string };
@@ -145,6 +145,7 @@ interface HubConfig {
     config: {
         JupyterHub: { admin_access: boolean };
         Authenticator: { admin_users: string[] };
+        KubeSpawner?: { delete_pvc: boolean };
     };
     services: Record<string, { api_token: pulumi.Output<string>; admin: boolean }>;
 }
@@ -326,6 +327,10 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
                 capacity: storageSize,
                 dynamic: {
                     storageClass: args.storageClassName || "gp3",
+                    // Explicit template with {servername} so KubeSpawner's _is_shared_pvc
+                    // check returns false and delete_pvc actually deletes per-server PVCs.
+                    // Default template uses {user_server} which KubeSpawner treats as shared.
+                    pvcNameTemplate: "claim-{username}--{servername}",
                 },
             },
             extraEnv: {
@@ -359,6 +364,10 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
                     admin_users: args.adminUsers || ["admin"],
                     // Allow any user with dummy authenticator for demo
                     // In production, configure proper auth (OAuth, LDAP, etc.)
+                },
+                KubeSpawner: {
+                    // Delete PVCs when a named server is removed via API (remove: true)
+                    delete_pvc: true,
                 },
             },
             // Define an API service for external applications (MaaS) to manage notebooks
@@ -414,6 +423,8 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
                 },
                 hub: {
                     ...hubConfig,
+                    allowNamedServers: true,
+                    namedServerLimitPerUser: 5,
                     // Hub container resources
                     resources: {
                         requests: {
@@ -466,28 +477,51 @@ export class JupyterHubComponent extends pulumi.ComponentResource {
         this.hubServiceName = pulumi.interpolate`hub`;
         this.proxyServiceName = pulumi.interpolate`proxy-public`;
 
-        // Get the proxy-public service to extract LoadBalancer hostname
-        // The service is created by the Helm chart, so we need to look it up after deployment
-        if (enableLoadBalancer) {
-            // Look up the service created by Helm to get the LoadBalancer hostname
-            const proxyService = k8s.core.v1.Service.get(
-                `${name}-proxy-service-lookup`,
-                pulumi.interpolate`${namespaceName}/proxy-public`,
-                { parent: this, dependsOn: [this.release] }
-            );
+        // Resolve public URL for JupyterHub
+        // On fresh stacks the proxy-public service doesn't exist yet, so we always
+        // start with the internal cluster DNS URL. After the first successful deploy,
+        // we look up the service to extract the LoadBalancer hostname.
+        const internalUrl = `http://proxy-public.${namespaceName}.svc.cluster.local`;
 
-            // Get the LoadBalancer hostname or IP
-            this.publicUrl = proxyService.status.apply(status => {
-                const ingress = status?.loadBalancer?.ingress?.[0];
-                if (ingress?.hostname) {
-                    return `http://${ingress.hostname}`;
-                } else if (ingress?.ip) {
-                    return `http://${ingress.ip}`;
+        if (enableLoadBalancer) {
+            // Use the release status to decide whether we can look up the service.
+            // On first deploy the release doesn't exist yet, so status will be empty
+            // and we fall back to the internal URL.
+            this.publicUrl = this.release.status.apply(status => {
+                // If the release hasn't been deployed yet (preview on fresh stack),
+                // status will be empty — fall back to internal URL
+                if (!status || status.status !== "deployed") {
+                    return internalUrl;
                 }
-                return `http://proxy-public.${namespaceName}.svc.cluster.local`;
+                // Release is deployed; the service exists but we can't read it
+                // from within an apply. Return internal URL — on subsequent runs
+                // the Service.get below will resolve the actual LB hostname.
+                return internalUrl;
             });
+
+            // After first deploy, override with the actual LB hostname.
+            // This uses Service.get which requires the service to exist.
+            // It's safe because Pulumi only runs this during update (not preview)
+            // when the release already exists in state.
+            if (pulumi.runtime.isDryRun() === false) {
+                const proxyService = k8s.core.v1.Service.get(
+                    `${name}-proxy-service-lookup`,
+                    pulumi.interpolate`${namespaceName}/proxy-public`,
+                    { parent: this, dependsOn: [this.release] }
+                );
+
+                this.publicUrl = proxyService.status.apply(status => {
+                    const ingress = status?.loadBalancer?.ingress?.[0];
+                    if (ingress?.hostname) {
+                        return `http://${ingress.hostname}`;
+                    } else if (ingress?.ip) {
+                        return `http://${ingress.ip}`;
+                    }
+                    return internalUrl;
+                });
+            }
         } else {
-            this.publicUrl = pulumi.interpolate`http://proxy-public.${namespaceName}.svc.cluster.local`;
+            this.publicUrl = pulumi.output(internalUrl);
         }
 
         this.registerOutputs({

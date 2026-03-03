@@ -1,5 +1,49 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+
+const profiles = [
+  {
+    id: 'cpu-standard',
+    name: 'CPU - Standard',
+    description: 'Standard CPU notebook for data analysis and development',
+    cpu: '2 cores',
+    memory: '4 GB',
+    gpu: null,
+    icon: (
+      <svg className="w-8 h-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
+      </svg>
+    )
+  },
+  {
+    id: 'cpu-large',
+    name: 'CPU - Large',
+    description: 'Large CPU notebook for intensive data processing',
+    cpu: '4 cores',
+    memory: '16 GB',
+    gpu: null,
+    icon: (
+      <svg className="w-8 h-8 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
+      </svg>
+    )
+  },
+  {
+    id: 'gpu-ml-ai',
+    name: 'GPU - ML/AI',
+    description: 'GPU-enabled notebook for machine learning and AI workloads',
+    cpu: '4 cores',
+    memory: '32 GB',
+    gpu: '1x NVIDIA GPU',
+    icon: (
+      <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+      </svg>
+    )
+  }
+];
+
+const POLL_INTERVAL = 5000; // 5 seconds
 
 const Notebooks = () => {
   const [notebooks, setNotebooks] = useState([]);
@@ -8,85 +52,54 @@ const Notebooks = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [creating, setCreating] = useState(false);
   const [selectedProfile, setSelectedProfile] = useState('cpu-standard');
+  const [notebookName, setNotebookName] = useState('');
   const [jupyterhubUrl, setJupyterhubUrl] = useState(null);
+  const [deletingServers, setDeletingServers] = useState(new Set());
 
-  const profiles = [
-    {
-      id: 'cpu-standard',
-      name: 'CPU - Standard',
-      description: 'Standard CPU notebook for data analysis and development',
-      cpu: '2 cores',
-      memory: '4 GB',
-      gpu: null,
-      icon: (
-        <svg className="w-8 h-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
-        </svg>
-      )
-    },
-    {
-      id: 'cpu-large',
-      name: 'CPU - Large',
-      description: 'Large CPU notebook for intensive data processing',
-      cpu: '4 cores',
-      memory: '16 GB',
-      gpu: null,
-      icon: (
-        <svg className="w-8 h-8 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
-        </svg>
-      )
-    },
-    {
-      id: 'gpu-ml-ai',
-      name: 'GPU - ML/AI',
-      description: 'GPU-enabled notebook for machine learning and AI workloads',
-      cpu: '4 cores',
-      memory: '32 GB',
-      gpu: '1x NVIDIA GPU',
-      icon: (
-        <svg className="w-8 h-8 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23-.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
-        </svg>
-      )
-    }
-  ];
-
-  useEffect(() => {
-    fetchNotebooks();
-  }, []);
-
-  const fetchNotebooks = async () => {
-    setLoading(true);
+  const fetchNotebooks = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true);
     setError(null);
     try {
       const response = await axios.get('/api/notebooks');
       setNotebooks(response.data.notebooks || []);
       setJupyterhubUrl(response.data.jupyterhubUrl || null);
+      // Clear deleted servers that are no longer in the list
+      setDeletingServers(prev => {
+        const currentNames = new Set((response.data.notebooks || []).map(n => n.serverName));
+        const next = new Set([...prev].filter(s => currentNames.has(s)));
+        return next.size === prev.size ? prev : next;
+      });
     } catch (err) {
       console.error('Error fetching notebooks:', err);
-      // Don't show error for 503 (JupyterHub not ready) - just show empty state
       if (err.response?.status !== 503) {
         setError(err.response?.data?.error || err.message || 'Failed to fetch notebooks');
       }
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
-  };
+  }, []);
+
+  // Initial fetch with spinner + always-on 5s polling (same pattern as Agents)
+  useEffect(() => {
+    fetchNotebooks(true);
+    const interval = setInterval(fetchNotebooks, POLL_INTERVAL);
+    return () => clearInterval(interval);
+  }, [fetchNotebooks]);
 
   const createNotebook = async () => {
     setCreating(true);
     try {
       const response = await axios.post('/api/notebooks', {
-        profile: selectedProfile
+        profile: selectedProfile,
+        name: notebookName || undefined
       });
 
       if (response.data.url) {
-        // Open notebook in new tab
         window.open(response.data.url, '_blank');
       }
 
       setShowCreateModal(false);
+      setNotebookName('');
       fetchNotebooks();
     } catch (err) {
       console.error('Error creating notebook:', err);
@@ -96,19 +109,36 @@ const Notebooks = () => {
     }
   };
 
-  const stopNotebook = async (serverName) => {
+  const deleteNotebook = async (user, serverName) => {
+    // Optimistic: mark as deleting immediately
+    setDeletingServers(prev => new Set([...prev, serverName]));
     try {
-      await axios.delete(`/api/notebooks/${serverName}`);
-      fetchNotebooks();
+      await axios.delete(`/api/notebooks/${encodeURIComponent(user)}/${encodeURIComponent(serverName)}`);
+      // Remove from local state immediately for snappy UX
+      setNotebooks(prev => prev.filter(n => n.serverName !== serverName));
+      setDeletingServers(prev => {
+        const next = new Set(prev);
+        next.delete(serverName);
+        return next;
+      });
     } catch (err) {
-      console.error('Error stopping notebook:', err);
-      setError(err.response?.data?.error || 'Failed to stop notebook');
+      console.error('Error deleting notebook:', err);
+      setError(err.response?.data?.error || 'Failed to delete notebook');
+      // Remove deleting state on error so user can retry
+      setDeletingServers(prev => {
+        const next = new Set(prev);
+        next.delete(serverName);
+        return next;
+      });
     }
   };
 
   const openNotebook = (notebook) => {
-    if (jupyterhubUrl && notebook.url) {
-      window.open(`${jupyterhubUrl}${notebook.url}`, '_blank');
+    if (jupyterhubUrl) {
+      const path = notebook.serverName
+        ? `/user/${notebook.user}/${notebook.serverName}/lab`
+        : `/user/${notebook.user}/lab`;
+      window.open(`${jupyterhubUrl}${path}`, '_blank');
     }
   };
 
@@ -215,7 +245,7 @@ const Notebooks = () => {
         <div className="px-6 py-4 border-b border-charcoal-100 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-charcoal-900">Active Notebooks</h2>
           <button
-            onClick={fetchNotebooks}
+            onClick={() => fetchNotebooks(true)}
             className="btn-ghost flex items-center gap-2 text-sm"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -272,10 +302,18 @@ const Notebooks = () => {
                   )}
 
                   <button
-                    onClick={() => stopNotebook(notebook.name)}
-                    className="btn-ghost text-red-600 hover:text-red-700 hover:bg-red-50 text-sm"
+                    onClick={() => deleteNotebook(notebook.user, notebook.serverName)}
+                    disabled={deletingServers.has(notebook.serverName)}
+                    className="btn-ghost text-red-600 hover:text-red-700 hover:bg-red-50 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Stop
+                    {deletingServers.has(notebook.serverName) ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 border-2 border-red-300 border-t-red-600 rounded-full animate-spin"></span>
+                        Deleting...
+                      </span>
+                    ) : (
+                      'Delete'
+                    )}
                   </button>
                 </div>
               </div>
@@ -288,9 +326,9 @@ const Notebooks = () => {
       {showCreateModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex min-h-screen items-center justify-center p-4">
-            <div className="fixed inset-0 bg-charcoal-900/50 backdrop-blur-sm" onClick={() => setShowCreateModal(false)}></div>
+            <div className="fixed inset-0 z-0 bg-charcoal-900/40" onClick={() => setShowCreateModal(false)}></div>
 
-            <div className="relative bg-white rounded-2xl shadow-xl max-w-2xl w-full p-8">
+            <div className="relative z-10 bg-white rounded-2xl shadow-xl max-w-2xl w-full p-8">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold text-charcoal-900 font-display">Create Notebook</h2>
                 <button
@@ -301,6 +339,23 @@ const Notebooks = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-charcoal-700 mb-2">
+                  Notebook Name
+                </label>
+                <input
+                  type="text"
+                  value={notebookName}
+                  onChange={(e) => setNotebookName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 30))}
+                  placeholder="e.g., data-exploration"
+                  className="input"
+                  disabled={creating}
+                />
+                <p className="text-xs text-charcoal-400 mt-1">
+                  Lowercase letters, numbers, and hyphens only. Auto-generated if left empty.
+                </p>
               </div>
 
               <p className="text-charcoal-500 mb-6">Select a compute profile for your notebook:</p>

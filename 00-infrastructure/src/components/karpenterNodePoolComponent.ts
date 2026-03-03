@@ -105,7 +105,7 @@ export interface KarpenterNodePoolArgs {
      * NodeClass reference name
      * @default "default"
      */
-    nodeClassName?: string;
+    nodeClassName?: pulumi.Input<string>;
 
     /**
      * Labels to apply to nodes
@@ -161,7 +161,7 @@ interface NodePoolSpec {
     template: {
         metadata?: { labels: Record<string, string> };
         spec: {
-            nodeClassRef: { group: string; kind: string; name: string };
+            nodeClassRef: { group: string; kind: string; name: pulumi.Input<string> };
             requirements: NodeRequirement[];
             taints?: { key: string; value?: string; effect: string }[];
         };

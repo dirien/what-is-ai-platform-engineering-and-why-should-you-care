@@ -149,9 +149,10 @@ curl -X POST http://localhost:4000/model/new \
   -d '{
     "model_name": "your-model-name",
     "litellm_params": {
-      "model": "openai//mnt/models",
+      "model": "openai/org/Model-Name",
       "api_base": "http://your-model-svc.default.svc.cluster.local:8000/v1",
-      "api_key": "not-needed"
+      "api_key": "not-needed",
+      "max_tokens": 4096
     },
     "model_info": {
       "id": "your-model-name",
@@ -159,13 +160,15 @@ curl -X POST http://localhost:4000/model/new \
       "input_cost_per_token": 0.000003,
       "output_cost_per_token": 0.000009,
       "max_tokens": 32768,
+      "max_input_tokens": 28672,
+      "max_output_tokens": 4096,
       "base_model": "org/Model-Name",
       "description": "Model description with instance info ($X.XX/hr on instance-type)"
     }
   }'
 ```
 
-**Note:** The vLLM model name is `/mnt/models` (where KServe mounts the model), so use `openai//mnt/models` as the model identifier in LiteLLM.
+**Important:** When vLLM is started with `--served-model-name=org/Model-Name`, use `openai/org/Model-Name` as the model identifier in LiteLLM (e.g., `openai/Qwen/Qwen2.5-7B-Instruct`). The `--served-model-name` flag overrides the default `/mnt/models` path. Also set `litellm_params.max_tokens` to cap output tokens — LiteLLM does not enforce `model_info.max_output_tokens` on client requests.
 
 ## Updating Costs
 
@@ -190,6 +193,56 @@ Update the `capacityTypes` in the NodePool to enable spot:
 capacityTypes: ["spot", "on-demand"]
 ```
 
+## Image Generation Models
+
+Image generation models use **per-image pricing** instead of per-token pricing. The cost depends on the output image resolution and quality tier.
+
+### Amazon Nova Canvas (via Bedrock)
+
+AWS Bedrock pricing for Nova Canvas (us-east-1, March 2026):
+
+| Quality | Resolution | Cost per Image |
+|---------|-----------|----------------|
+| Standard | Up to 1024x1024 | $0.04 |
+| Standard | Up to 2048x2048 | $0.06 |
+| Premium | Up to 1024x1024 | $0.06 |
+| Premium | Up to 2048x2048 | $0.08 |
+
+Source: [AWS Bedrock Pricing](https://aws.amazon.com/bedrock/pricing/)
+
+**LiteLLM pricing configuration:**
+
+| Model | `input_cost_per_image` | `output_cost_per_image` | Mode |
+|-------|------------------------|-------------------------|------|
+| amazon-nova-canvas | $0.04 | $0.06 | image_generation |
+
+The `input_cost_per_image` covers the text prompt processing. The `output_cost_per_image` covers the generated image at standard resolution (1024x1024). For chargeback purposes, we use the standard quality pricing as the default.
+
+### Adding Image Generation Models to LiteLLM
+
+```bash
+curl -X POST http://localhost:4000/model/new \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "amazon-nova-canvas",
+    "litellm_params": {
+      "model": "bedrock/amazon.nova-canvas-v1:0",
+      "aws_region_name": "us-east-1"
+    },
+    "model_info": {
+      "id": "amazon-nova-canvas",
+      "mode": "image_generation",
+      "input_cost_per_image": 0.04,
+      "output_cost_per_image": 0.06,
+      "max_input_tokens": 2600,
+      "description": "Amazon Nova Canvas - Text-to-image generation via Bedrock ($0.04-$0.06/image)"
+    }
+  }'
+```
+
+**Note:** Image generation models use `input_cost_per_image` and `output_cost_per_image` fields instead of `input_cost_per_token` / `output_cost_per_token`. The `mode` must be set to `"image_generation"`.
+
 ## Comparison with Cloud APIs
 
 | Provider | Model | Input/1M | Output/1M |
@@ -200,6 +253,7 @@ capacityTypes: ["spot", "on-demand"]
 | **Self-hosted** | Qwen2.5-7B | $3.00 | $9.00 |
 | **Self-hosted** | Llama-3-8B | $3.00 | $9.00 |
 | **Self-hosted** | Qwen3-8B | $3.50 | $10.00 |
+| **Bedrock** | Nova Canvas | $0.04/image | $0.06/image |
 
 Self-hosted models are cost-competitive for:
 - High-volume workloads (amortize fixed costs)

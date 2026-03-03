@@ -9,8 +9,9 @@ This folder contains the Model-as-a-Service (MaaS) platform for the AI Platform 
     - "Warm Sophistication" design theme with coral/terracotta primary colors
     - Cream backgrounds, sage accents, Inter + Plus Jakarta Sans typography
     - Component styles: cards, badges, buttons, tables defined in index.css
-    - **Notebooks page** for JupyterHub integration
+    - **Notebooks page** for JupyterHub integration (named servers, auto-polling, PVC cleanup)
     - **FinOps Dashboard** with server-side spend aggregation and team spend view
+    - Per-image pricing support for image generation models (e.g., Amazon Nova Canvas)
   - `backend/` - Express.js API server (port 3001)
     - JupyterHub API integration for notebook management
     - Team management CRUD endpoints
@@ -62,9 +63,10 @@ The `infra/` folder uses Pulumi TypeScript with components in `infra/src/compone
 
 - **JupyterHubComponent** (`src/components/jupyterhubComponent.ts`) - Deploys JupyterHub for notebook support:
   - Deploys to dedicated `jupyterhub` namespace
+  - Named servers (up to 5 per user) for multiple concurrent notebooks
   - Multiple notebook profiles (CPU Standard, CPU Large, GPU ML/AI)
   - LiteLLM integration for OpenAI SDK access in notebooks
-  - Persistent storage for user data
+  - Persistent storage with automatic PVC cleanup on notebook deletion (`KubeSpawner.delete_pvc: true` + per-server `pvcNameTemplate`)
   - Idle notebook culling
   - Internet-facing AWS NLB via Load Balancer Controller
 
@@ -98,7 +100,9 @@ After `pulumi up`, you'll get:
 - `litellmServiceUrl` - Internal cluster URL for LiteLLM API
 - `litellmPublicUrl` - Public NLB URL for LiteLLM API (for external access)
 - `maasServiceUrl` - Internal cluster URL for MaaS app
-- `maasPublicUrl` - Public NLB URL for MaaS app
+- `maasLoadBalancerUrl` - Public NLB URL for MaaS app
+- `maasCloudFrontUrl` - Public CloudFront HTTPS URL for MaaS app (`*.cloudfront.net`, when enabled)
+- `maasPublicUrl` - Effective public URL (CloudFront URL when enabled, otherwise NLB URL)
 - `rdsEndpoint` - RDS PostgreSQL endpoint for LiteLLM database
 - `jupyterhubNamespace` - JupyterHub Kubernetes namespace
 - `jupyterhubPublicUrl` - Public NLB URL for JupyterHub
@@ -111,9 +115,40 @@ After `pulumi up`, you'll get:
 |------------|-------------|----------|
 | `appName` | Application name prefix | No (default: maas) |
 | `litellmMasterKey` | LiteLLM master key for admin API access (secret) | Yes |
+| `enableMaaSCloudFront` | Create CloudFront HTTPS front door for MaaS (`*.cloudfront.net`) | No (default: true) |
+| `maasTlsCertificateArn` | ACM certificate ARN for MaaS NLB TLS listener (port 443) | No |
+| `maasPublicHostname` | Custom DNS hostname for MaaS public URL output (must point to MaaS NLB) | No |
 | `infra:vpcId` | VPC ID for RDS subnet group | Yes |
 | `infra:privateSubnetIds` | Private subnet IDs for RDS (JSON array) | Yes |
 | `infra:clusterSecurityGroupId` | EKS cluster security group ID for RDS ingress | Yes |
+
+### HTTPS endpoint for proxy reliability (recommended, no domain needed)
+
+By default, the stack now creates a CloudFront distribution in front of MaaS and exposes:
+
+- `maasCloudFrontUrl`: `https://<distribution-id>.cloudfront.net`
+- `maasPublicUrl`: same CloudFront URL when enabled
+
+This avoids browser protocol issues on plain HTTP NLB endpoints and does not require buying a domain.
+
+To disable CloudFront and use raw NLB URL:
+
+```bash
+pulumi config set enableMaaSCloudFront false
+pulumi up
+```
+
+### Optional custom domain + NLB TLS
+
+If browsers are unreliable against the plain HTTP NLB endpoint, configure HTTPS:
+
+```bash
+pulumi config set maasTlsCertificateArn arn:aws:acm:us-east-1:<account-id>:certificate/<cert-id>
+pulumi config set maasPublicHostname maas.<your-domain>
+pulumi up
+```
+
+Then create a DNS CNAME/ALIAS from `maas.<your-domain>` to the MaaS NLB hostname and use the `maasPublicUrl` output.
 
 ## Cost Calculation
 

@@ -1,19 +1,21 @@
-import React from 'react';
-
 const ModelCard = ({ model, info, onClick }) => {
   const modelId = model.id || 'Unknown Model';
   const ownedBy = model.owned_by || 'Unknown';
   const providers = info?.providers || [ownedBy];
   const provider = providers[0] || ownedBy;
 
-  // Get cost info
+  // Get model capabilities
+  const mode = info?.mode || 'chat';
+  const isImageGen = mode === 'image_generation';
+
+  // Get cost info — image generation uses per-image pricing, others use per-token
   const inputCostPerToken = info?.input_cost_per_token || 0;
   const outputCostPerToken = info?.output_cost_per_token || 0;
   const inputCostPer1M = inputCostPerToken * 1000000;
   const outputCostPer1M = outputCostPerToken * 1000000;
+  const inputCostPerImage = info?.input_cost_per_image || 0;
+  const outputCostPerImage = info?.output_cost_per_image || 0;
 
-  // Get model capabilities
-  const mode = info?.mode || 'chat';
   const maxTokens = info?.max_tokens || info?.max_input_tokens;
 
   // Format cost display
@@ -43,6 +45,8 @@ const ModelCard = ({ model, info, onClick }) => {
         return 'bg-violet-100 text-violet-700';
       case 'embedding':
         return 'bg-amber-100 text-amber-700';
+      case 'image_generation':
+        return 'bg-primary-100 text-primary-700';
       default:
         return 'bg-charcoal-100 text-charcoal-700';
     }
@@ -50,7 +54,7 @@ const ModelCard = ({ model, info, onClick }) => {
 
   return (
     <div
-      onClick={onClick}
+      onClick={() => onClick(model)}
       className="card cursor-pointer overflow-hidden group"
     >
       {/* Subtle accent line */}
@@ -78,22 +82,38 @@ const ModelCard = ({ model, info, onClick }) => {
         {/* Cost Information - Key decision factor */}
         <div className="bg-cream-100 rounded-lg p-3 mb-4">
           <div className="flex items-center justify-between">
-            <div className="text-center flex-1">
-              <p className="text-xs text-charcoal-500 mb-0.5">Input / 1M</p>
-              <p className="text-sm font-semibold text-charcoal-800">{formatCost(inputCostPer1M)}</p>
-            </div>
-            <div className="w-px h-8 bg-charcoal-200"></div>
-            <div className="text-center flex-1">
-              <p className="text-xs text-charcoal-500 mb-0.5">Output / 1M</p>
-              <p className="text-sm font-semibold text-charcoal-800">{formatCost(outputCostPer1M)}</p>
-            </div>
-            {maxTokens && (
+            {isImageGen ? (
               <>
+                <div className="text-center flex-1">
+                  <p className="text-xs text-charcoal-500 mb-0.5">Input / image</p>
+                  <p className="text-sm font-semibold text-charcoal-800">{inputCostPerImage ? formatCost(inputCostPerImage) : '-'}</p>
+                </div>
                 <div className="w-px h-8 bg-charcoal-200"></div>
                 <div className="text-center flex-1">
-                  <p className="text-xs text-charcoal-500 mb-0.5">Context</p>
-                  <p className="text-sm font-semibold text-charcoal-800">{(maxTokens / 1000).toFixed(0)}K</p>
+                  <p className="text-xs text-charcoal-500 mb-0.5">Output / image</p>
+                  <p className="text-sm font-semibold text-charcoal-800">{outputCostPerImage ? formatCost(outputCostPerImage) : '-'}</p>
                 </div>
+              </>
+            ) : (
+              <>
+                <div className="text-center flex-1">
+                  <p className="text-xs text-charcoal-500 mb-0.5">Input / 1M</p>
+                  <p className="text-sm font-semibold text-charcoal-800">{formatCost(inputCostPer1M)}</p>
+                </div>
+                <div className="w-px h-8 bg-charcoal-200"></div>
+                <div className="text-center flex-1">
+                  <p className="text-xs text-charcoal-500 mb-0.5">Output / 1M</p>
+                  <p className="text-sm font-semibold text-charcoal-800">{formatCost(outputCostPer1M)}</p>
+                </div>
+                {maxTokens && (
+                  <>
+                    <div className="w-px h-8 bg-charcoal-200"></div>
+                    <div className="text-center flex-1">
+                      <p className="text-xs text-charcoal-500 mb-0.5">Context</p>
+                      <p className="text-sm font-semibold text-charcoal-800">{(maxTokens / 1000).toFixed(0)}K</p>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { buildPricingMap, calculateSpend } from '../utils/spend';
 import ModelUsageModal from './ModelUsageModal';
 
 const Subscriptions = () => {
@@ -28,36 +29,7 @@ const Subscriptions = () => {
       const logs = logsResponse.data || [];
       const modelInfoData = modelInfoResponse.data?.data || [];
 
-      // Build pricing map from model info
-      const pricingMap = new Map();
-      modelInfoData.forEach(m => {
-        const modelName = m.model_name || m.model_info?.id;
-        if (modelName) {
-          pricingMap.set(modelName, {
-            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
-            outputCostPerToken: m.model_info?.output_cost_per_token || 0
-          });
-        }
-      });
-
-      // Helper function to calculate spend from log
-      const calculateSpend = (log) => {
-        // Use log.spend if available and > 0
-        if (typeof log.spend === 'number' && log.spend > 0) {
-          return log.spend;
-        }
-
-        // Calculate from tokens using pricing
-        const modelName = log.model_group || log.model || log.model_id;
-        const pricing = pricingMap.get(modelName);
-        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
-          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
-          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
-          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
-        }
-
-        return 0;
-      };
+      const pricingMap = buildPricingMap(modelInfoData);
 
       // Build model map from keys (for key count)
       const modelMap = new Map();
@@ -86,7 +58,7 @@ const Subscriptions = () => {
         const modelName = log.model_group || log.model || log.model_id;
         if (modelName && modelMap.has(modelName)) {
           const existing = modelMap.get(modelName);
-          existing.totalSpend += calculateSpend(log);
+          existing.totalSpend += calculateSpend(log, pricingMap);
         }
       });
 
