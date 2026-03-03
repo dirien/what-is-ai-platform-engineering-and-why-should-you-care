@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { buildPricingMap, calculateSpend } from '../utils/spend';
 
 const ModelUsageModal = ({ model, onClose }) => {
   const [loading, setLoading] = useState(true);
@@ -7,13 +8,7 @@ const ModelUsageModal = ({ model, onClose }) => {
   const [spendLogs, setSpendLogs] = useState([]);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    if (model) {
-      fetchUsageData();
-    }
-  }, [model]);
-
-  const fetchUsageData = async () => {
+  const fetchUsageData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -35,37 +30,8 @@ const ModelUsageModal = ({ model, onClose }) => {
         axios.get('/api/model-info').catch(() => ({ data: { data: [] } }))
       ]);
 
-      // Build pricing map from model info
       const modelInfoData = modelInfoResponse.data?.data || [];
-      const pricingMap = new Map();
-      modelInfoData.forEach(m => {
-        const modelName = m.model_name || m.model_info?.id;
-        if (modelName) {
-          pricingMap.set(modelName, {
-            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
-            outputCostPerToken: m.model_info?.output_cost_per_token || 0
-          });
-        }
-      });
-
-      // Helper function to calculate spend from log
-      const calculateSpend = (log) => {
-        // Use log.spend if available and > 0
-        if (typeof log.spend === 'number' && log.spend > 0) {
-          return log.spend;
-        }
-
-        // Calculate from tokens using pricing
-        const modelName = log.model_group || log.model || log.model_id;
-        const pricing = pricingMap.get(modelName);
-        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
-          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
-          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
-          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
-        }
-
-        return 0;
-      };
+      const pricingMap = buildPricingMap(modelInfoData);
 
       // Filter logs for this specific model
       // LiteLLM uses model_group for the model name in spend logs
@@ -76,7 +42,7 @@ const ModelUsageModal = ({ model, onClose }) => {
       // Update logs with calculated spend for display
       const logsWithSpend = modelLogs.map(log => ({
         ...log,
-        calculatedSpend: calculateSpend(log)
+        calculatedSpend: calculateSpend(log, pricingMap)
       }));
 
       setSpendLogs(logsWithSpend);
@@ -113,7 +79,13 @@ const ModelUsageModal = ({ model, onClose }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [model]);
+
+  useEffect(() => {
+    if (model) {
+      fetchUsageData();
+    }
+  }, [model, fetchUsageData]);
 
   if (!model) return null;
 
@@ -121,14 +93,14 @@ const ModelUsageModal = ({ model, onClose }) => {
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         {/* Background overlay */}
-        <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" aria-hidden="true"></div>
+        <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
 
         {/* Center modal */}
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         {/* Modal panel */}
         <div
-          className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+          className="relative z-10 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}

@@ -1,16 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import axios from 'axios';
 
-const CreateApiKeyModal = ({ onClose, onKeyCreated, availableModels, loadingModels }) => {
+const CreateApiKeyModal = ({ onClose, onKeyCreated, availableModels, loadingModels, teams = [] }) => {
   const [name, setName] = useState('');
+  const [selectedTeamId, setSelectedTeamId] = useState('');
   const [selectedModels, setSelectedModels] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
-  const filteredModels = availableModels.filter(model =>
+  const filteredModels = useMemo(() => availableModels.filter(model =>
     model.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  ), [availableModels, searchTerm]);
 
   const toggleModel = (model) => {
     if (selectedModels.includes(model)) {
@@ -39,7 +40,8 @@ const CreateApiKeyModal = ({ onClose, onKeyCreated, availableModels, loadingMode
     try {
       const response = await axios.post('/api/keys', {
         name: name.trim(),
-        models: selectedModels
+        models: selectedModels,
+        ...(selectedTeamId && { team_id: selectedTeamId })
       });
       // Call the callback to show the newly created key
       onKeyCreated(response.data);
@@ -52,11 +54,11 @@ const CreateApiKeyModal = ({ onClose, onKeyCreated, availableModels, loadingMode
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-        <div className="fixed inset-0 transition-opacity bg-charcoal-900/40 backdrop-blur-sm" aria-hidden="true"></div>
+        <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         <div
-          className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
+          className="relative z-10 inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
           onClick={(e) => e.stopPropagation()}
         >
           <form onSubmit={handleSubmit}>
@@ -96,6 +98,28 @@ const CreateApiKeyModal = ({ onClose, onKeyCreated, availableModels, loadingMode
                   disabled={isSubmitting}
                 />
               </div>
+
+              {/* Team Selection */}
+              {teams.length > 0 && (
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-charcoal-700 mb-2">
+                    Team (optional)
+                  </label>
+                  <select
+                    value={selectedTeamId}
+                    onChange={(e) => setSelectedTeamId(e.target.value)}
+                    className="input"
+                    disabled={isSubmitting}
+                  >
+                    <option value="">No team</option>
+                    {teams.map((team) => (
+                      <option key={team.team_id} value={team.team_id}>
+                        {team.team_alias || team.team_id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Model Selection */}
               <div className="mb-6">

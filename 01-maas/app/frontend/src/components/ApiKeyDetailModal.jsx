@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { buildPricingMap, calculateSpend } from '../utils/spend';
 
 const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
@@ -9,15 +10,7 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
   const [copiedExample, setCopiedExample] = useState(null);
   const [litellmUrl, setLitellmUrl] = useState('http://localhost:4000');
 
-  // Fetch spend data and config when modal opens
-  useEffect(() => {
-    if (apiKey) {
-      fetchSpendData();
-      fetchConfig();
-    }
-  }, [apiKey]);
-
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     try {
       const response = await axios.get('/api/config');
       if (response.data.litellmPublicUrl) {
@@ -26,9 +19,9 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
     } catch (err) {
       console.error('Failed to fetch config:', err);
     }
-  };
+  }, []);
 
-  const fetchSpendData = async () => {
+  const fetchSpendData = useCallback(async () => {
     try {
       const [logsResponse, modelInfoResponse] = await Promise.all([
         axios.get('/api/spend/logs').catch(() => ({ data: [] })),
@@ -38,44 +31,27 @@ const ApiKeyDetailModal = ({ apiKey, onClose, onKeyRegenerated }) => {
       const logs = logsResponse.data || [];
       const modelInfoData = modelInfoResponse.data?.data || [];
 
-      // Build pricing map
-      const pricingMap = new Map();
-      modelInfoData.forEach(m => {
-        const modelName = m.model_name || m.model_info?.id;
-        if (modelName) {
-          pricingMap.set(modelName, {
-            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
-            outputCostPerToken: m.model_info?.output_cost_per_token || 0
-          });
-        }
-      });
-
-      // Calculate spend from logs
-      const calculateSpend = (log) => {
-        if (typeof log.spend === 'number' && log.spend > 0) {
-          return log.spend;
-        }
-        const modelName = log.model_group || log.model || log.model_id;
-        const pricing = pricingMap.get(modelName);
-        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
-          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
-          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
-          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
-        }
-        return 0;
-      };
+      const pricingMap = buildPricingMap(modelInfoData);
 
       // Filter logs for this key and calculate total spend
       const keyLogs = logs.filter(log =>
         log.api_key === apiKey.id || (log.api_key && apiKey.id && log.api_key.includes(apiKey.id.substring(0, 16)))
       );
 
-      const totalSpend = keyLogs.reduce((sum, log) => sum + calculateSpend(log), 0);
+      const totalSpend = keyLogs.reduce((sum, log) => sum + calculateSpend(log, pricingMap), 0);
       setCalculatedSpend(totalSpend);
     } catch (err) {
       console.error('Error fetching spend data:', err);
     }
-  };
+  }, [apiKey]);
+
+  // Fetch spend data and config when modal opens
+  useEffect(() => {
+    if (apiKey) {
+      fetchSpendData();
+      fetchConfig();
+    }
+  }, [apiKey, fetchSpendData, fetchConfig]);
 
   if (!apiKey) return null;
 
@@ -193,14 +169,14 @@ main();`;
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         {/* Background overlay */}
-        <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" aria-hidden="true"></div>
+        <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
 
         {/* Center modal */}
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         {/* Modal panel */}
         <div
-          className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+          className="relative z-10 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -250,6 +226,10 @@ main();`;
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Models</p>
                   <p className="text-sm text-gray-900 font-medium">{models.length} model(s)</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Team</p>
+                  <p className="text-sm text-gray-900 font-medium">{apiKey.team_id || 'None'}</p>
                 </div>
               </div>
             </div>
@@ -365,10 +345,10 @@ main();`;
         {showRegenerateConfirm && (
           <div className="fixed inset-0 z-[60] overflow-y-auto" onClick={() => setShowRegenerateConfirm(false)}>
             <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-              <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" aria-hidden="true"></div>
+              <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
               <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
               <div
-                className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+                className="relative z-10 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">

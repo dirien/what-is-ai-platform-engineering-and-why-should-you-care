@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { buildPricingMap, calculateSpend, formatCurrency, formatNumber } from '../utils/spend';
 import {
-  LineChart,
-  Line,
   BarChart,
   Bar,
   XAxis,
@@ -12,26 +11,15 @@ import {
   ResponsiveContainer,
   Area,
   AreaChart,
-  PieChart,
-  Pie,
-  Cell
 } from 'recharts';
-
-const COLORS = ['#E07A5F', '#81B29A', '#3D405B', '#F2CC8F', '#F4A261', '#E76F51'];
 
 const ApiKeyUsageModal = ({ apiKey, onClose }) => {
   const [loading, setLoading] = useState(true);
   const [usageData, setUsageData] = useState(null);
-  const [error, setError] = useState(null);
+  const [_error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('30d');
 
-  useEffect(() => {
-    if (apiKey) {
-      fetchUsageData();
-    }
-  }, [apiKey, timeRange]);
-
-  const fetchUsageData = async () => {
+  const fetchUsageData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -58,8 +46,8 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
         axios.get('/api/spend/logs', {
           params: {
             api_key: apiKey.id,
-            start_date: startDate.toISOString(),
-            end_date: endDate.toISOString()
+            start_date: startDate.toISOString().split('T')[0],
+            end_date: endDate.toISOString().split('T')[0]
           }
         }),
         axios.get('/api/model-info').catch(() => ({ data: { data: [] } }))
@@ -67,42 +55,25 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
 
       const logs = logsResponse.data || [];
 
-      // Build pricing map from model info
       const modelInfoData = modelInfoResponse.data?.data || [];
-      const pricingMap = new Map();
-      modelInfoData.forEach(m => {
-        const modelName = m.model_name || m.model_info?.id;
-        if (modelName) {
-          pricingMap.set(modelName, {
-            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
-            outputCostPerToken: m.model_info?.output_cost_per_token || 0
+      const pricingMap = buildPricingMap(modelInfoData);
+
+      // Filter logs for this specific key (exact first, then hash-prefix fallback)
+      const targetKey = String(apiKey.id || '');
+      const targetPrefix = targetKey.substring(0, 16);
+      const getLogKey = (log) => String(log?.api_key || log?.metadata?.user_api_key || '');
+
+      const exactKeyLogs = logs.filter((log) => getLogKey(log) === targetKey);
+      const keyLogs = exactKeyLogs.length > 0
+        ? exactKeyLogs
+        : logs.filter((log) => {
+            const logKey = getLogKey(log);
+            if (!logKey) return false;
+            return (
+              logKey.includes(targetPrefix) ||
+              targetKey.includes(logKey.substring(0, 16))
+            );
           });
-        }
-      });
-
-      // Helper function to calculate spend from log
-      const calculateSpend = (log) => {
-        // Use log.spend if available and > 0
-        if (typeof log.spend === 'number' && log.spend > 0) {
-          return log.spend;
-        }
-
-        // Calculate from tokens using pricing
-        const modelName = log.model_group || log.model || log.model_id;
-        const pricing = pricingMap.get(modelName);
-        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
-          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
-          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
-          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
-        }
-
-        return 0;
-      };
-
-      // Filter logs for this specific key
-      const keyLogs = logs.filter(log =>
-        log.api_key === apiKey.id || log.api_key?.includes(apiKey.id?.substring(0, 16))
-      );
 
       // Calculate summary
       let totalSpend = 0;
@@ -112,7 +83,7 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
 
       keyLogs.forEach(log => {
         // Calculate spend from tokens using pricing when log.spend is 0
-        totalSpend += calculateSpend(log);
+        totalSpend += calculateSpend(log, pricingMap);
         totalTokens += log.total_tokens || log.usage?.total_tokens || 0;
         inputTokens += log.prompt_tokens || log.usage?.prompt_tokens || 0;
         outputTokens += log.completion_tokens || log.usage?.completion_tokens || 0;
@@ -126,7 +97,7 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       keyLogs.forEach(log => {
         const date = new Date(log.startTime || log.created_at || log.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const existing = spendByDayMap.get(date) || { date, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += calculateSpend(log);
+        existing.spend += calculateSpend(log, pricingMap);
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByDayMap.set(date, existing);
@@ -138,7 +109,7 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
       keyLogs.forEach(log => {
         const model = log.model_group || log.model || log.model_id || 'Unknown';
         const existing = spendByModelMap.get(model) || { model, spend: 0, requests: 0, tokens: 0 };
-        existing.spend += calculateSpend(log);
+        existing.spend += calculateSpend(log, pricingMap);
         existing.requests += 1;
         existing.tokens += log.total_tokens || log.usage?.total_tokens || 0;
         spendByModelMap.set(model, existing);
@@ -148,13 +119,18 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
 
       // Recent requests
       const recentRequests = keyLogs
-        .slice(-10)
+        .sort((a, b) => {
+          const aDate = new Date(a.startTime || a.created_at || a.timestamp).getTime();
+          const bDate = new Date(b.startTime || b.created_at || b.timestamp).getTime();
+          return bDate - aDate;
+        })
+        .slice(0, 10)
         .reverse()
         .map(log => ({
           date: new Date(log.startTime || log.created_at || log.timestamp).toLocaleString(),
           model: log.model_group || log.model || log.model_id || 'Unknown',
           tokens: log.total_tokens || log.usage?.total_tokens || 0,
-          spend: calculateSpend(log)
+          spend: calculateSpend(log, pricingMap)
         }));
 
       setUsageData({
@@ -189,30 +165,25 @@ const ApiKeyUsageModal = ({ apiKey, onClose }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiKey, timeRange]);
 
-  const formatCurrency = (value) => {
-    if (value >= 1) return `$${value.toFixed(2)}`;
-    if (value >= 0.01) return `$${value.toFixed(4)}`;
-    return `$${value.toFixed(6)}`;
-  };
+  useEffect(() => {
+    if (apiKey) {
+      fetchUsageData();
+    }
+  }, [apiKey, timeRange, fetchUsageData]);
 
-  const formatNumber = (value) => {
-    if (value >= 1000000) return `${(value / 1000000).toFixed(2)}M`;
-    if (value >= 1000) return `${(value / 1000).toFixed(1)}K`;
-    return value.toLocaleString();
-  };
 
   if (!apiKey) return null;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-        <div className="fixed inset-0 transition-opacity bg-charcoal-900/40 backdrop-blur-sm" aria-hidden="true"></div>
+        <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         <div
-          className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-5xl sm:w-full"
+          className="relative z-10 inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-5xl sm:w-full"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}

@@ -1,6 +1,6 @@
 # 00-infrastructure
 
-Pulumi TypeScript project for EKS cluster with GPU support via Karpenter, EBS CSI driver, and KServe LLMInferenceService.
+Pulumi TypeScript project for EKS cluster with GPU support via Karpenter, H100 MIG managed node group, GPU Operator, EBS CSI driver, and KServe LLMInferenceService.
 
 ## Stack
 
@@ -14,7 +14,7 @@ Pulumi TypeScript project for EKS cluster with GPU support via Karpenter, EBS CS
 Reusable component for creating Karpenter NodePools. Located in `src/components/karpenterNodePoolComponent.ts`.
 
 **Required:**
-- `instanceTypes: string[]` - Instance types (e.g., `["g5.2xlarge"]`)
+- `instanceTypes: string[]` - Instance types (e.g., `["m6i.large"]`)
 
 **Optional:**
 - `poolName?: string` - NodePool name in K8s (defaults to resource name)
@@ -32,16 +32,37 @@ Reusable component for creating Karpenter NodePools. Located in `src/components/
 
 **Example:**
 ```typescript
-const gpuPool = new KarpenterNodePoolComponent("gpu-standard", {
-    instanceTypes: ["g5.2xlarge"],
-    capacityTypes: ["on-demand"],
-    limits: { cpu: 1000 },
-    taints: [{ key: "nvidia.com/gpu", value: "true", effect: "NoSchedule" }],
+const generalPool = new KarpenterNodePoolComponent("general", {
+    instanceTypes: ["m6i.large", "m6i.xlarge"],
+    capacityTypes: ["spot", "on-demand"],
+    limits: { cpu: 100 },
     disruption: {
-        consolidationPolicy: "WhenEmpty",
+        consolidationPolicy: "WhenEmptyOrUnderutilized",
         consolidateAfter: "1m",
     },
 }, { provider: k8sProvider });
+```
+
+### GpuOperatorComponent
+
+Component for deploying the NVIDIA GPU Operator with MIG support. Located in `src/components/gpuOperatorComponent.ts`.
+
+**Args:**
+- `namespace?: string` - Namespace for the GPU Operator (default: `"gpu-operator"`)
+- `gpuOperatorVersion?: string` - GPU Operator Helm chart version (default: `"v25.3.0"`)
+
+**Features:**
+- Installs NVIDIA device plugin (targeted to `gpu-type: h100` nodes)
+- Enables Node Feature Discovery (NFD)
+- Configures MIG Manager with `all-3g.40gb` default profile
+- Disables driver/toolkit (uses host drivers from AL2023 NVIDIA AMI)
+- Disables DCGM exporter (handled by ObservabilityComponent)
+
+**Example:**
+```typescript
+const gpuOperator = new GpuOperatorComponent("gpu-operator", {
+    namespace: "gpu-operator",
+}, { provider: k8sProvider, dependsOn: [h100NodeGroup] });
 ```
 
 ### KServeComponent
@@ -50,6 +71,7 @@ Component for installing KServe v0.16 with all dependencies. Located in `src/com
 
 **Installs:**
 - cert-manager (from Jetstack Helm repo)
+- LeaderWorkerSet (LWS) for multi-node inference
 - kserve-crd (from OCI registry)
 - kserve controller (from OCI registry)
 - llmisvc-crd (LLMInferenceService CRDs)
@@ -60,6 +82,7 @@ Component for installing KServe v0.16 with all dependencies. Located in `src/com
 - `kserveVersion?: string` - KServe version (default: `"v0.16.0"`)
 - `gatewayApiVersion?: string` - Gateway API CRDs version (default: `"v1.4.1"`)
 - `deploymentMode?: "RawDeployment" | "Serverless"` - Deployment mode (default: `"RawDeployment"`)
+- `lwsVersion?: string` - LeaderWorkerSet version (default: `"0.7.0"`)
 - `storageInitializer?: StorageInitializerConfig` - Storage initializer resource config
 - `llmisvController?: LLMISvcControllerConfig` - LLMInferenceService controller resource config
 
@@ -81,6 +104,7 @@ const kserve = new KServeComponent("kserve", {
     certManagerVersion: "v1.19.3",
     kserveVersion: "v0.16.0",
     deploymentMode: "RawDeployment",
+    lwsVersion: "0.7.0",
     storageInitializer: {
         memoryRequest: "16Gi",
         memoryLimit: "64Gi",
@@ -93,7 +117,7 @@ const kserve = new KServeComponent("kserve", {
         memoryRequest: "512Mi",
         memoryLimit: "2Gi",
     },
-}, { provider: k8sProvider, dependsOn: [gpuStandardNodePool] });
+}, { provider: k8sProvider, dependsOn: [generalNodePool, h100NodeGroup] });
 ```
 
 ### LLMInferenceServiceComponent
@@ -101,7 +125,7 @@ const kserve = new KServeComponent("kserve", {
 Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Located in `src/components/llmInferenceServiceComponent.ts`.
 
 **Required:**
-- `modelUri: string` - Model URI (e.g., `"oci://...ecr.../kserve-models/qwen-qwen2-5-7b-instruct:latest"` or `"hf://Qwen/Qwen2.5-7B-Instruct"`)
+- `modelUri: string` - Model URI (e.g., `"oci://...ecr.../kserve-models/openai-gpt-oss-20b:latest"` or `"hf://Qwen/Qwen2.5-7B-Instruct"`)
 - `modelName: string` - Model name for vLLM
 
 **Optional:**
@@ -109,7 +133,8 @@ Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Loca
 - `namespace?: string` - K8s namespace (default: `"default"`)
 - `replicas?: number` - Number of replicas (default: `1`)
 - `resources?: LLMResourceConfig` - CPU, memory, GPU resources
-- `args?: string[]` - Additional vLLM arguments (e.g., `--max_model_len`, `--gpu_memory_utilization`, `--enable-auto-tool-choice`, `--tool-call-parser`)
+- `gpuResourceName?: string` - GPU resource name for scheduling (default: `"nvidia.com/gpu"`). For MIG slices, use e.g. `"nvidia.com/mig-3g.40gb"`
+- `args?: string[]` - Additional vLLM arguments (e.g., `--max_model_len`, `--enable-auto-tool-choice`, `--tool-call-parser`)
 - `env?: EnvVar[]` - Environment variables
 - `tolerations?: Toleration[]` - Pod tolerations
 - `startupProbe?: ProbeConfig` - Startup probe for slow-starting models (recommended for large context lengths)
@@ -117,54 +142,55 @@ Component for deploying LLMs using KServe's LLMInferenceService (v1alpha1). Loca
 
 **Startup Probe (recommended for LLMs):**
 
-LLMs can take 10-30+ minutes to load on cold EBS snapshot nodes (lazy block initialization + model loading + torch.compile + CUDA graph warmup). Use `startupProbe` to prevent premature pod restarts:
+LLMs can take 10-30+ minutes to load (model loading + torch.compile + CUDA graph warmup). Use `startupProbe` to prevent premature pod restarts:
 
 ```typescript
 startupProbe: {
-    initialDelaySeconds: 60,    // Wait before first probe
+    initialDelaySeconds: 120,   // Wait before first probe
     periodSeconds: 30,          // Probe interval
     timeoutSeconds: 30,         // Probe timeout
-    failureThreshold: 60,       // Max failures (60*30s = 30 min)
+    failureThreshold: 60,       // Max failures (120s + 60*30s = 32 min)
 }
 ```
 
 **Example:**
 ```typescript
-const qwen2Model = new LLMInferenceServiceComponent("qwen2-7b-instruct", {
-    modelUri: `oci://${ecrBaseUrl}/kserve-models/qwen-qwen2-5-7b-instruct:latest`,
-    modelName: "Qwen/Qwen2.5-7B-Instruct",
+const gptOss20b = new LLMInferenceServiceComponent("gpt-oss-20b", {
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/openai-gpt-oss-20b:latest`,
+    modelName: "openai/gpt-oss-20b",
     storageType: "oci",
     namespace: "default",
     replicas: 1,
+    gpuResourceName: "nvidia.com/mig-3g.40gb",
     resources: {
-        cpuLimit: "4",
-        memoryLimit: "32Gi",
+        cpuLimit: "8",
+        memoryLimit: "64Gi",
         gpuCount: 1,
-        cpuRequest: "2",
-        memoryRequest: "16Gi",
+        cpuRequest: "4",
+        memoryRequest: "32Gi",
     },
     args: [
-        "--max_model_len=32768",  // Native context length for Qwen2.5
-        "--gpu_memory_utilization=0.9",
+        "--max_model_len=32768",
+        "--async-scheduling",
         "--enable-auto-tool-choice",
-        "--tool-call-parser=hermes",
+        "--tool-call-parser=openai",
     ],
+    tolerations: [{key: "nvidia.com/gpu", operator: "Equal", value: "h100", effect: "NoSchedule"}],
     startupProbe: {
-        initialDelaySeconds: 60,
+        initialDelaySeconds: 120,
         periodSeconds: 30,
         timeoutSeconds: 30,
         failureThreshold: 60,
     },
-}, { provider: k8sProvider });
+}, { provider: k8sProvider, dependsOn: [kserve, gpuOperator] });
 ```
 
-**Context Length Guidelines for A10G (24GB VRAM):**
+**Context Length Guidelines for H100 MIG 3g.40gb (40GB VRAM):**
 
 | Model | Native Context | Recommended `--max_model_len` |
 |-------|----------------|-------------------------------|
-| Qwen2.5-7B-Instruct | 32K | 32768 (fits on A10G) |
-| Llama-3-8B-Instruct | 8K | 8192 |
-| Qwen3-8B | 32K | 20480 (limited by KV cache memory) |
+| openai/gpt-oss-20b | 32K | 32768 |
+| Qwen/Qwen3-30B-A3B | 32K | 16384 (MoE, limited by KV cache) |
 
 ### ObservabilityComponent
 
@@ -205,9 +231,8 @@ const observability = new ObservabilityComponent("observability", {
     dcgmExporter: {
         enabled: true,
         version: "4.8.1",
-        // Use Karpenter GPU node label to only schedule on GPU nodes
-        nodeSelector: { "karpenter.k8s.aws/instance-gpu-count": "1" },
-        tolerations: [{ key: "nvidia.com/gpu", operator: "Exists", effect: "NoSchedule" }],
+        nodeSelector: { "gpu-type": "h100" },
+        tolerations: [{ key: "nvidia.com/gpu", operator: "Equal", value: "h100", effect: "NoSchedule" }],
         memoryRequest: "512Mi",
         memoryLimit: "1Gi",
     },
@@ -226,7 +251,7 @@ pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
 Set via `pulumi config set`:
 - `clusterName` (required) - EKS cluster name
 - `ecrBaseUrl` (required for OCI models) - ECR registry base URL (e.g., `052848974346.dkr.ecr.us-east-1.amazonaws.com`)
-- `gpuSnapshotId` (recommended) - EBS snapshot ID with pre-cached container images for faster GPU node startup
+- `h100SnapshotId` (recommended) - EBS snapshot ID with pre-cached container images for faster H100 node startup
 - `huggingface-token` (secret) - HuggingFace API token for model downloads
 
 ## Pulumi ESC Commands
@@ -255,8 +280,8 @@ pulumi up --yes
 
 ## GPU Node Isolation
 
-GPU nodes are tainted to ensure only GPU workloads run on them:
-- **Taint:** `nvidia.com/gpu=true:NoSchedule`
+H100 GPU nodes are tainted to ensure only GPU workloads run on them:
+- **Taint:** `nvidia.com/gpu=h100:NoSchedule`
 
 Non-GPU workloads (cert-manager, kserve-controller, etc.) run on:
 - System managed node group (with `CriticalAddonsOnly` taint for cluster-critical workloads)
@@ -267,9 +292,9 @@ Non-GPU workloads (cert-manager, kserve-controller, etc.) run on:
 After deployment, test the model with port-forward:
 
 ```bash
-# Port forward
+# Port forward to gpt-oss-20b
 pulumi env run self-service-ai-application-platforms/demo-ai-idp-cluster-cluster -i -- \
-  kubectl port-forward svc/qwen2-7b-instruct-kserve-workload-svc 8000:8000 -n default
+  kubectl port-forward svc/gpt-oss-20b-kserve-workload-svc 8000:8000 -n default
 
 # Check available models
 curl http://localhost:8000/v1/models
@@ -285,21 +310,18 @@ curl http://localhost:8000/v1/chat/completions \
 
 ## GPU Instance Sizing
 
-| Model Size | GPU Memory | Recommended Instance |
-|------------|------------|---------------------|
-| 3B         | ~6GB       | g4dn.xlarge (T4 16GB) |
-| 7B         | ~14GB      | g5.2xlarge (A10G 24GB) |
-| 13B        | ~26GB      | g5.4xlarge (A10G 24GB) or p4d |
-| 70B        | ~140GB     | p4d.24xlarge (8x A100 40GB) |
-| 480B MoE   | ~250GB     | p4de.24xlarge (8x A100 80GB) |
+| Model Size | GPU Memory | Recommended Instance / MIG Profile |
+|------------|------------|-----------------------------------|
+| 7B-20B     | ~14-40GB   | H100 MIG 3g.40gb (40GB VRAM per slice) |
+| 30B MoE    | ~20GB active | H100 MIG 3g.40gb (MoE only loads active params) |
+| 70B        | ~140GB     | p5.48xlarge (8x H100 80GB) |
 
 ## NodePools
 
-Three NodePools are configured via Karpenter:
+Two node groups handle workloads:
 
-- **general**: `m6i.large`, `m6i.xlarge`, `m7i.large`, `m7i.xlarge`, etc. (spot + on-demand) - For general workloads (observability, KServe controllers)
-- **gpu-standard**: `g5.xlarge`, `g5.2xlarge`, `g5.4xlarge` (A10G 24GB) - For 7B-13B models
-- **gpu-a100** (commented): `p4de.24xlarge` (8x A100 80GB) - For large MoE models (480B+)
+- **general** (Karpenter NodePool): `m6i.large`, `m6i.xlarge`, `m7i.large`, `m7i.xlarge`, etc. (spot + on-demand) - For general workloads (observability, KServe controllers)
+- **h100-mig-nodes** (EKS Managed Node Group): `p5.4xlarge` (H100 80GB with MIG 3g.40gb) - For LLM inference using MIG slices
 
 ## Networking
 
@@ -309,10 +331,13 @@ KServe's LLMInferenceService controller requires a Gateway API Gateway for netwo
 
 - **EKS Cluster**: Standard EKS cluster with API authentication mode
 - **System Node Group**: Managed node group for cluster-critical workloads (Karpenter, CoreDNS, etc.)
+- **H100 MIG Node Group**: Managed node group with AL2023 NVIDIA AMI for GPU inference with MIG support
 - **EBS CSI Driver**: Installed via EKS addon with Pod Identity for persistent volume provisioning
 - **gp3 StorageClass**: Default storage class for all persistent volumes
-- **Karpenter**: Manages GPU and general workload nodes with Bottlerocket AMI
+- **Karpenter**: Manages general workload nodes with Bottlerocket AMI
+- **GPU Operator**: NVIDIA GPU Operator for MIG management (device plugin + MIG manager) on H100 nodes
 - **AWS Load Balancer Controller**: Manages ALB/NLB for Ingress and Service resources
+- **LeaderWorkerSet (LWS)**: For multi-node inference support
 - **Gateway API CRDs**: Required by KServe's LLMInferenceService networking
 
 ## Gated Models

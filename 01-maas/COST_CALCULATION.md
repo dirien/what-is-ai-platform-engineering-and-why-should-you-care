@@ -149,9 +149,10 @@ curl -X POST http://localhost:4000/model/new \
   -d '{
     "model_name": "your-model-name",
     "litellm_params": {
-      "model": "openai//mnt/models",
+      "model": "openai/org/Model-Name",
       "api_base": "http://your-model-svc.default.svc.cluster.local:8000/v1",
-      "api_key": "not-needed"
+      "api_key": "not-needed",
+      "max_tokens": 4096
     },
     "model_info": {
       "id": "your-model-name",
@@ -159,13 +160,15 @@ curl -X POST http://localhost:4000/model/new \
       "input_cost_per_token": 0.000003,
       "output_cost_per_token": 0.000009,
       "max_tokens": 32768,
+      "max_input_tokens": 28672,
+      "max_output_tokens": 4096,
       "base_model": "org/Model-Name",
       "description": "Model description with instance info ($X.XX/hr on instance-type)"
     }
   }'
 ```
 
-**Note:** The vLLM model name is `/mnt/models` (where KServe mounts the model), so use `openai//mnt/models` as the model identifier in LiteLLM.
+**Important:** When vLLM is started with `--served-model-name=org/Model-Name`, use `openai/org/Model-Name` as the model identifier in LiteLLM (e.g., `openai/Qwen/Qwen2.5-7B-Instruct`). The `--served-model-name` flag overrides the default `/mnt/models` path. Also set `litellm_params.max_tokens` to cap output tokens — LiteLLM does not enforce `model_info.max_output_tokens` on client requests.
 
 ## Updating Costs
 

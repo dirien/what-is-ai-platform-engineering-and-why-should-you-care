@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import ModelCard from './ModelCard';
 import ModelDetailModal from './ModelDetailModal';
@@ -89,10 +89,13 @@ const Models = () => {
     }
   };
 
-  const filteredModels = models.filter(model => {
+  const handleModelClick = useCallback((model) => setSelectedModel(model), []);
+  const handleCloseDetail = useCallback(() => setSelectedModel(null), []);
+
+  const filteredModels = useMemo(() => models.filter(model => {
     const modelId = model.id || '';
     return modelId.toLowerCase().includes(searchTerm.toLowerCase());
-  });
+  }), [models, searchTerm]);
 
   if (loading) {
     return (
@@ -198,7 +201,7 @@ const Models = () => {
               key={model.id || index}
               model={model}
               info={modelInfo[model.id]}
-              onClick={() => setSelectedModel(model)}
+              onClick={handleModelClick}
             />
           ))}
         </div>
@@ -209,7 +212,7 @@ const Models = () => {
         <ModelDetailModal
           model={selectedModel}
           info={modelInfo[selectedModel.id]}
-          onClose={() => setSelectedModel(null)}
+          onClose={handleCloseDetail}
         />
       )}
     </div>

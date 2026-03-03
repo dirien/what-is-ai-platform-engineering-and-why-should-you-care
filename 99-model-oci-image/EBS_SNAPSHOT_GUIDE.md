@@ -1,14 +1,32 @@
 # EBS Snapshot for Pre-Cached Container Images
 
-This guide documents how to create EBS snapshots with pre-cached container images for Bottlerocket nodes using Karpenter. Pre-caching images significantly reduces container startup times by eliminating the need to download large model images at runtime.
+This guide documents how to create EBS snapshots with pre-cached container images for Karpenter nodes. Pre-caching images significantly reduces container startup times by eliminating the need to download large model images at runtime.
+
+Two AMI families are supported:
+
+| AMI Family | Script | CFN Template | Use Case |
+|-----------|--------|-------------|----------|
+| **Bottlerocket** | `snapshot.sh` | `ebs-snapshot-instance.yaml` | Standard GPU nodes (g5, g6) |
+| **AL2023 NVIDIA** | `snapshot-al2023.sh` | `ebs-snapshot-instance-al2023.yaml` | H100/MIG nodes (p5, p4d) |
 
 ## Overview
+
+### Bottlerocket (Original)
 
 The [bottlerocket-images-cache](https://github.com/aws-samples/bottlerocket-images-cache) project provides a script that:
 1. Launches a Bottlerocket EC2 instance
 2. Pulls specified container images to the data volume
 3. Creates an EBS snapshot of the data volume
 4. Cleans up temporary resources
+
+### AL2023 NVIDIA
+
+The `snapshot-al2023.sh` script provides equivalent functionality for AL2023 NVIDIA AMI nodes:
+1. Launches an AL2023_x86_64_NVIDIA EC2 instance (via SSM parameter for EKS 1.32)
+2. Formats a data volume, redirects containerd storage to it
+3. Pulls specified container images to the data volume
+4. Creates an EBS snapshot of the data volume
+5. Cleans up temporary resources
 
 This snapshot can then be used with Karpenter's EC2NodeClass to pre-populate the data volume on GPU nodes.
 
@@ -18,7 +36,7 @@ This snapshot can then be used with Karpenter's EC2NodeClass to pre-populate the
 - Pulumi ESC environment with AWS credentials (e.g., `pulumi-idp/auth`)
 - Container images already pushed to accessible registries (ECR, GHCR, etc.)
 
-## Step 1: Download the Script
+## Step 1: Download the Script (Bottlerocket)
 
 ```bash
 cd 99-model-oci-image
@@ -30,6 +48,8 @@ chmod +x snapshot.sh
 # Download CloudFormation template
 curl -sL https://raw.githubusercontent.com/aws-samples/bottlerocket-images-cache/main/ebs-snapshot-instance.yaml -o ebs-snapshot-instance.yaml
 ```
+
+The AL2023 scripts (`snapshot-al2023.sh` and `ebs-snapshot-instance-al2023.yaml`) are already included in this repository.
 
 ## Step 2: Get Model Image URIs
 
@@ -45,13 +65,15 @@ Example output:
 ```json
 {
   "gptOssEcrUrl": "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/openai-gpt-oss-20b",
-  "llamaEcrUrl": "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct",
-  "qwen25EcrUrl": "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen2-5-7b-instruct",
-  "qwenEcrUrl": "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen3-8b"
+  "gptOssCodeBuildProject": "gpt-oss-20b-builder-...",
+  "qwen3MoeEcrUrl": "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen3-30b-a3b",
+  "qwen3MoeCodeBuildProject": "qwen3-30b-a3b-builder-..."
 }
 ```
 
 ## Step 3: Run the Snapshot Script
+
+### Bottlerocket (g5, g6 instances)
 
 Run the script with Pulumi ESC to inject AWS credentials:
 
@@ -63,24 +85,24 @@ pulumi env run pulumi-idp/auth -- ./snapshot.sh \
   <image1>:latest,<image2>:latest,<image3>:latest
 ```
 
-### Parameters
+### Parameters (shared by both scripts)
 
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `-r, --region` | AWS region | `us-east-1` |
-| `-s, --snapshot-size` | Volume size in GiB | `250` |
-| `-i, --instance-type` | EC2 instance type | `g5.2xlarge` |
+| `-s, --snapshot-size` | Volume size in GiB | `250` / `500` |
+| `-i, --instance-type` | EC2 instance type | `g5.2xlarge` / `p5.4xlarge` |
 | `-e, --encrypt` | Encrypt the snapshot | (flag) |
 | `-A, --arch` | Architecture (amd64, arm64) | `amd64` |
 
-### Example with Multiple Images
+### Example: Bottlerocket with Multiple Images
 
 ```bash
 pulumi env run pulumi-idp/auth -- ./snapshot.sh -r us-east-1 -s 250 \
-  "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest,052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen2-5-7b-instruct:latest,052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen3-8b:latest,052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/openai-gpt-oss-20b:latest,ghcr.io/llm-d/llm-d-dev:v0.2.2"
+  "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/openai-gpt-oss-20b:latest,052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen3-30b-a3b:latest,ghcr.io/llm-d/llm-d-dev:v0.2.2"
 ```
 
-### Progress Output
+### Bottlerocket Progress Output
 
 The script will show progress through 8 steps:
 ```
@@ -94,6 +116,50 @@ The script will show progress through 8 steps:
 [8/8] Cleanup ...
 All done! Created snapshot in us-east-1: snap-0dca38ea429a621b1
 ```
+
+### AL2023 NVIDIA (p5, p4d instances with H100/A100 GPUs)
+
+For nodes that require the AL2023 NVIDIA AMI (e.g., H100 MIG nodes, p5 instances):
+
+```bash
+pulumi env run pulumi-idp/auth -- ./snapshot-al2023.sh \
+  -r us-east-1 \
+  -s 500 \
+  -i p5.4xlarge \
+  <image1>:latest,<image2>:latest
+```
+
+### Example: AL2023 with Model Images
+
+```bash
+pulumi env run pulumi-idp/auth -- ./snapshot-al2023.sh -r us-east-1 -s 500 -i p5.4xlarge \
+  "052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/openai-gpt-oss-20b:latest,052848974346.dkr.ecr.us-east-1.amazonaws.com/kserve-models/qwen-qwen3-30b-a3b:latest,ghcr.io/llm-d/llm-d-dev:v0.2.2"
+```
+
+### AL2023 Progress Output
+
+The AL2023 script shows progress through 7 steps (no separate kubelet stop needed):
+```
+[1/7] Deploying EC2 CFN stack ...
+[2/7] Launching SSM ...
+[3/7] Cleanup existing images ...
+[4/7] Pulling images ...
+[5/7] Stopping instance ...
+[6/7] Creating snapshot ...
+[7/7] Cleanup ...
+All done! Created snapshot in us-east-1: snap-0abc123def456789
+```
+
+### Key Differences: Bottlerocket vs AL2023
+
+| Feature | Bottlerocket | AL2023 NVIDIA |
+|---------|-------------|---------------|
+| AMI source | SSM: `/aws/service/bottlerocket/...` | SSM: `/aws/service/eks/optimized-ami/1.32/amazon-linux-2023/x86_64/nvidia/recommended/image_id` |
+| Default instance | `m5.large` | `p5.4xlarge` |
+| Default volume | 50 GiB | 500 GiB |
+| containerd CLI | `apiclient exec admin sheltie ctr ...` | `ctr -n k8s.io` |
+| SSM agent | Via admin container | Native |
+| Steps | 8 (includes kubelet stop) | 7 (kubelet handled by userdata) |
 
 ## Step 4: Update Karpenter EC2NodeClass
 
@@ -138,11 +204,19 @@ cd 00-infrastructure
 pulumi up --yes
 ```
 
-## Current Snapshot
+## Current Snapshots
 
-| Snapshot ID | Size | Region | Images |
-|-------------|------|--------|--------|
-| `snap-0dca38ea429a621b1` | 250 GiB | us-east-1 | Meta Llama 3 8B, Qwen 2.5 7B, Qwen 3 8B, GPT-OSS 20B, llm-d-dev:v0.2.2 |
+### Bottlerocket
+
+| Snapshot ID | Size | Region | AMI Family | Images |
+|-------------|------|--------|------------|--------|
+| `snap-0dca38ea429a621b1` | 250 GiB | us-east-1 | Bottlerocket | GPT-OSS 20B, Qwen3-30B-A3B, llm-d-dev:v0.2.2 |
+
+### AL2023 NVIDIA
+
+| Snapshot ID | Size | Region | AMI Family | Images |
+|-------------|------|--------|------------|--------|
+| *(not yet created)* | 500 GiB | us-east-1 | AL2023 NVIDIA | GPT-OSS 20B, Qwen3-30B-A3B |
 
 ## Sizing Guidelines
 
@@ -159,7 +233,9 @@ pulumi up --yes
 
 ### Script fails with "Invalid template path"
 
-Make sure `ebs-snapshot-instance.yaml` is in the same directory as `snapshot.sh`.
+Make sure the CloudFormation template is in the same directory as the script:
+- For Bottlerocket: `ebs-snapshot-instance.yaml` alongside `snapshot.sh`
+- For AL2023: `ebs-snapshot-instance-al2023.yaml` alongside `snapshot-al2023.sh`
 
 ### Image pull fails
 

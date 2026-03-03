@@ -1,5 +1,3 @@
-import React from 'react';
-
 const ModelCard = ({ model, info, onClick }) => {
   const modelId = model.id || 'Unknown Model';
   const ownedBy = model.owned_by || 'Unknown';
@@ -50,7 +48,7 @@ const ModelCard = ({ model, info, onClick }) => {
 
   return (
     <div
-      onClick={onClick}
+      onClick={() => onClick(model)}
       className="card cursor-pointer overflow-hidden group"
     >
       {/* Subtle accent line */}
