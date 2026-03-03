@@ -144,7 +144,9 @@ const agentImage = new dockerBuild.Image(`${appName}-agent-image`, {
 const jupyterhub = new JupyterHubComponent("jupyterhub", {
     namespace: "jupyterhub",
     chartVersion: "4.3.2",
-    litellmServiceUrl: "http://litellm.maas.svc.cluster.local:4000",
+    // Use the fixed-name litellm-lb service created by MaaSComponent
+    // (LoadBalancer services are also reachable via ClusterIP within the cluster)
+    litellmServiceUrl: "http://litellm-lb.maas.svc.cluster.local:4000",
     storageSize: "10Gi",
     idleTimeout: 3600, // 1 hour
     adminUsers: ["admin"],
