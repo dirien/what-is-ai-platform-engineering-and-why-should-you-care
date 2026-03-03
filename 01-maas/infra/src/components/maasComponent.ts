@@ -355,10 +355,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
         }, { parent: this });
 
         // Deploy LiteLLM as the API gateway for model inference
-        // Fixed release name so the K8s service DNS is deterministic:
-        // litellm.<namespace>.svc.cluster.local:4000
         this.litellm = new k8s.helm.v3.Release(`${name}-litellm`, {
-            name: "litellm",
             chart: "oci://ghcr.io/berriai/litellm-helm",
             version: litellmChartVersion,
             namespace: namespaceName,
