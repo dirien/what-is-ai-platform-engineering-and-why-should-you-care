@@ -428,6 +428,13 @@ export interface LLMInferenceServiceArgs {
     };
 
     /**
+     * GPU resource name for scheduling
+     * @default "nvidia.com/gpu"
+     * For MIG slices, use e.g. "nvidia.com/mig-3g.40gb"
+     */
+    gpuResourceName?: string;
+
+    /**
      * ServiceAccount name for the pod
      * Use this to provide access to secrets (e.g., HuggingFace token for gated models)
      */
@@ -467,7 +474,7 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
 
         // Build inline template if any overrides are provided
         const hasInlineOverrides = args.resources || args.tolerations || args.env ||
-                                   args.image || args.args || args.livenessProbe || args.startupProbe || args.serviceAccountName;
+                                   args.image || args.args || args.livenessProbe || args.startupProbe || args.serviceAccountName || args.gpuResourceName;
 
         let template: LLMTemplateSpec | undefined;
 
@@ -508,6 +515,8 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
                 failureThreshold: args.startupProbe?.failureThreshold ?? 60,  // 60 * 30s = 30 min max
             };
 
+            const gpuResource = args.gpuResourceName || "nvidia.com/gpu";
+
             // Build container spec
             const containerSpec: LLMContainerSpec = {
                 name: "main",
@@ -515,12 +524,12 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
                     limits: {
                         cpu: resources.cpuLimit,
                         memory: resources.memoryLimit,
-                        "nvidia.com/gpu": `${resources.gpuCount}`,
+                        [gpuResource]: `${resources.gpuCount}`,
                     },
                     requests: {
                         cpu: resources.cpuRequest,
                         memory: resources.memoryRequest,
-                        "nvidia.com/gpu": `${resources.gpuCount}`,
+                        [gpuResource]: `${resources.gpuCount}`,
                     },
                 },
                 livenessProbe: {
@@ -583,9 +592,15 @@ export class LLMInferenceServiceComponent extends pulumi.ComponentResource {
             metadata: {
                 name: name,
                 namespace: namespace,
+                annotations: {
+                    "pulumi.com/skipAwait": "true",
+                },
             },
             spec: spec,
-        }, { parent: this });
+        }, {
+            parent: this,
+            customTimeouts: { delete: "30s" },
+        });
 
         this.serviceName = this.llmInferenceService.metadata.name;
         this.serviceNamespace = this.llmInferenceService.metadata.namespace;

@@ -4,11 +4,16 @@
     "description": "ECR repository and Docker image build for LiteLLM Model Discovery App",
     "main": "index.ts",
     "scripts": {
-        "build": "tsc"
+        "build": "tsc",
+        "lint": "eslint . && tsc --noEmit",
+        "lint:fix": "eslint . --fix"
     },
     "devDependencies": {
+        "@eslint/js": "^10.0.1",
         "@types/node": "^25.3.0",
-        "typescript": "^5.9.3"
+        "eslint": "^10.0.2",
+        "typescript": "^5.9.3",
+        "typescript-eslint": "^8.56.1"
     },
     "dependencies": {
         "@pulumi/aws": "^7.20.0",

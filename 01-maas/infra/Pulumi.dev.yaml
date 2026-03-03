@@ -1,8 +1,9 @@
 environment:
   - self-service-ai-application-platforms/demo-ai-idp-cluster-cluster
 config:
+  litellm-app-ecr:agentHomeSubPath: .home
+  litellm-app-ecr:agentWorkspaceSize: 50Gi
+  litellm-app-ecr:agentWorkspaceStorageClass: gp3
   litellm-app-ecr:litellmMasterKey:
     secure: AAABAEKRvBMg/hJqAx9OsjL5OLbKyPbKsHpbHRB3HNTxX8Ft9RrdZtS8G8MA7/idpl0F9gJpCDA+r9s=
-  infra:vpcId: vpc-0b758a04538373945
-  infra:privateSubnetIds: '["subnet-044983376e3deb403","subnet-05d7144cd7e855408","subnet-0c6528a7f5ef905d6"]'
-  infra:clusterSecurityGroupId: sg-0f8438b3a8c30a939
+  litellm-app-ecr:enableMaaSCloudFront: "true"

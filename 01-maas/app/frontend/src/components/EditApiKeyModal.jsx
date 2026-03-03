@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 
-const EditApiKeyModal = ({ apiKey, onClose, onKeyUpdated, availableModels, loadingModels }) => {
+const EditApiKeyModal = ({ apiKey, onClose, onKeyUpdated, availableModels, loadingModels, teams = [] }) => {
   const [name, setName] = useState('');
+  const [selectedTeamId, setSelectedTeamId] = useState('');
   const [selectedModels, setSelectedModels] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -11,13 +12,14 @@ const EditApiKeyModal = ({ apiKey, onClose, onKeyUpdated, availableModels, loadi
   useEffect(() => {
     if (apiKey) {
       setName(apiKey.name);
+      setSelectedTeamId(apiKey.team_id || '');
       setSelectedModels(apiKey.models);
     }
   }, [apiKey]);
 
-  const filteredModels = availableModels.filter(model =>
+  const filteredModels = useMemo(() => availableModels.filter(model =>
     model.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  ), [availableModels, searchTerm]);
 
   const toggleModel = (model) => {
     if (selectedModels.includes(model)) {
@@ -46,7 +48,8 @@ const EditApiKeyModal = ({ apiKey, onClose, onKeyUpdated, availableModels, loadi
     try {
       const response = await axios.put(`/api/keys/${encodeURIComponent(apiKey.id)}`, {
         name: name.trim(),
-        models: selectedModels
+        models: selectedModels,
+        team_id: selectedTeamId || null
       });
       onKeyUpdated(response.data);
       onClose();
@@ -63,14 +66,14 @@ const EditApiKeyModal = ({ apiKey, onClose, onKeyUpdated, availableModels, loadi
     <div className="fixed inset-0 z-50 overflow-y-auto" onClick={onClose}>
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         {/* Background overlay */}
-        <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" aria-hidden="true"></div>
+        <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
 
         {/* Center modal */}
         <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
 
         {/* Modal panel */}
         <div
-          className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
+          className="relative z-10 inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full"
           onClick={(e) => e.stopPropagation()}
         >
           <form onSubmit={handleSubmit}>
@@ -110,6 +113,28 @@ const EditApiKeyModal = ({ apiKey, onClose, onKeyUpdated, availableModels, loadi
                   disabled={isSubmitting}
                 />
               </div>
+
+              {/* Team Selection */}
+              {teams.length > 0 && (
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Team (optional)
+                  </label>
+                  <select
+                    value={selectedTeamId}
+                    onChange={(e) => setSelectedTeamId(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                    disabled={isSubmitting}
+                  >
+                    <option value="">No team</option>
+                    {teams.map((team) => (
+                      <option key={team.team_id} value={team.team_id}>
+                        {team.team_alias || team.team_id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Model Selection */}
               <div className="mb-4">

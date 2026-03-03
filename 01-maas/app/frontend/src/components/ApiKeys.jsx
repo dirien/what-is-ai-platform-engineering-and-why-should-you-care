@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { buildPricingMap, calculateSpend } from '../utils/spend';
 import CreateApiKeyModal from './CreateApiKeyModal';
 import ApiKeyDetailModal from './ApiKeyDetailModal';
 import EditApiKeyModal from './EditApiKeyModal';
@@ -10,6 +11,7 @@ const ApiKeys = () => {
   const [apiKeys, setApiKeys] = useState([]);
   const [availableModels, setAvailableModels] = useState([]);
   const [loadingModels, setLoadingModels] = useState(true);
+  const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -22,6 +24,7 @@ const ApiKeys = () => {
   useEffect(() => {
     fetchApiKeys();
     fetchAvailableModels();
+    fetchTeams();
   }, []);
 
   const fetchApiKeys = async () => {
@@ -39,32 +42,7 @@ const ApiKeys = () => {
       const logs = logsResponse.data || [];
       const modelInfoData = modelInfoResponse.data?.data || [];
 
-      // Build pricing map from model info
-      const pricingMap = new Map();
-      modelInfoData.forEach(m => {
-        const modelName = m.model_name || m.model_info?.id;
-        if (modelName) {
-          pricingMap.set(modelName, {
-            inputCostPerToken: m.model_info?.input_cost_per_token || 0,
-            outputCostPerToken: m.model_info?.output_cost_per_token || 0
-          });
-        }
-      });
-
-      // Helper function to calculate spend from log
-      const calculateSpend = (log) => {
-        if (typeof log.spend === 'number' && log.spend > 0) {
-          return log.spend;
-        }
-        const modelName = log.model_group || log.model || log.model_id;
-        const pricing = pricingMap.get(modelName);
-        if (pricing && (pricing.inputCostPerToken > 0 || pricing.outputCostPerToken > 0)) {
-          const inputToks = log.prompt_tokens || log.usage?.prompt_tokens || 0;
-          const outputToks = log.completion_tokens || log.usage?.completion_tokens || 0;
-          return (inputToks * pricing.inputCostPerToken) + (outputToks * pricing.outputCostPerToken);
-        }
-        return 0;
-      };
+      const pricingMap = buildPricingMap(modelInfoData);
 
       // Calculate spend per key from logs
       const keySpendMap = new Map();
@@ -72,7 +50,7 @@ const ApiKeys = () => {
         const keyId = log.api_key;
         if (keyId) {
           const currentSpend = keySpendMap.get(keyId) || 0;
-          keySpendMap.set(keyId, currentSpend + calculateSpend(log));
+          keySpendMap.set(keyId, currentSpend + calculateSpend(log, pricingMap));
         }
       });
 
@@ -118,6 +96,23 @@ const ApiKeys = () => {
     } finally {
       setLoadingModels(false);
     }
+  };
+
+  const fetchTeams = async () => {
+    try {
+      const response = await axios.get('/api/teams');
+      const data = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+      setTeams(data);
+    } catch (err) {
+      console.error('Error fetching teams:', err);
+      setTeams([]);
+    }
+  };
+
+  const getTeamName = (teamId) => {
+    if (!teamId) return null;
+    const team = teams.find(t => t.team_id === teamId);
+    return team?.team_alias || teamId;
   };
 
   const handleKeyCreated = (newKey) => {
@@ -257,6 +252,7 @@ const ApiKeys = () => {
               <tr className="table-header">
                 <th className="px-6 py-4 text-left">Name</th>
                 <th className="px-6 py-4 text-left">Key</th>
+                <th className="px-6 py-4 text-left">Team</th>
                 <th className="px-6 py-4 text-left">Models</th>
                 <th className="px-6 py-4 text-left">Created</th>
                 <th className="px-6 py-4 text-left">Usage</th>
@@ -273,6 +269,13 @@ const ApiKeys = () => {
                     <code className="text-xs font-mono text-charcoal-600 bg-charcoal-100 px-2.5 py-1 rounded-lg">
                       {key.key}
                     </code>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {key.team_id ? (
+                      <span className="badge badge-neutral">{getTeamName(key.team_id)}</span>
+                    ) : (
+                      <span className="text-sm text-charcoal-400">-</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1.5">
@@ -357,6 +360,7 @@ const ApiKeys = () => {
           onKeyCreated={handleKeyCreated}
           availableModels={availableModels}
           loadingModels={loadingModels}
+          teams={teams}
         />
       )}
 
@@ -382,6 +386,7 @@ const ApiKeys = () => {
           onKeyUpdated={handleKeyUpdated}
           availableModels={availableModels}
           loadingModels={loadingModels}
+          teams={teams}
         />
       )}
 
@@ -389,10 +394,10 @@ const ApiKeys = () => {
       {keyToDelete && (
         <div className="fixed inset-0 z-50 overflow-y-auto" onClick={() => setKeyToDelete(null)}>
           <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
-            <div className="fixed inset-0 transition-opacity bg-charcoal-900/40 backdrop-blur-sm" aria-hidden="true"></div>
+            <div className="fixed inset-0 z-0 transition-opacity bg-charcoal-900/40" aria-hidden="true"></div>
             <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
             <div
-              className="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+              className="relative z-10 inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-soft-lg transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="p-6">

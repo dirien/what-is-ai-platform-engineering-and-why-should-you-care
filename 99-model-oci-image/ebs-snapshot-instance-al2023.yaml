@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AL2023 NVIDIA instance to snapshot data volume with cached container images.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Description: "EC2 instance type to launch (must have NVIDIA GPU for driver init)"
+    Default: p5.4xlarge
+  InstanceRole:
+    Type: String
+    Description: "Name of IAM Role used in instance"
+    Default: NONE
+  Encrypt:
+    Type: String
+    Description: "Encrypt the EBS volumes"
+    Default: NONE
+  KMSId:
+    Type: String
+    Description: "Id of the KMS Key used for the snapshot"
+    Default: NONE
+  SnapshotSize:
+    Type: Number
+    Description: "Size of the target snapshot (GiB)"
+    Default: 500
+  SecurityGroupId:
+    Type: String
+    Description: "Optional Security Group ID. If not provided, the default VPC security group will be used."
+    Default: NONE
+  SubnetId:
+    Type: String
+    Description: "Optional Subnet ID. If not provided, a subnet from the default VPC will be used."
+    Default: NONE
+  AssociatePublicIpAddress:
+    Type: String
+    Description: "Whether to associate a public IP address to the instance"
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+Conditions:
+  CreateNewIAMRole: !Equals [!Ref InstanceRole, NONE]
+  UseCustomKMSId: !Not [!Equals [!Ref KMSId, NONE]]
+  Encrypt: !Not [!Equals [!Ref Encrypt, NONE]]
+  UseCustomSecurityGroup: !Not [!Equals [!Ref SecurityGroupId, NONE]]
+  UseCustomSubnet: !Not [!Equals [!Ref SubnetId, NONE]]
+
+Resources:
+  AL2023NodeRole:
+    Type: "AWS::IAM::Role"
+    Condition: CreateNewIAMRole
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                !Sub "ec2.${AWS::URLSuffix}"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+
+  AL2023NodeInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - !If [CreateNewIAMRole, !Ref AL2023NodeRole, !Ref InstanceRole]
+
+  AL2023LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Sub "resolve:ssm:/aws/service/eks/optimized-ami/1.32/amazon-linux-2023/x86_64/nvidia/recommended/image_id"
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Name: !Ref AL2023NodeInstanceProfile
+        EbsOptimized: true
+        UserData:
+          Fn::Base64: |
+            #!/bin/bash
+            set -ex
+            # Format and mount data volume
+            mkfs.xfs /dev/xvdb
+            mkdir -p /mnt/data
+            mount /dev/xvdb /mnt/data
+            # Move containerd storage to data volume
+            systemctl stop containerd
+            cp -a /var/lib/containerd /mnt/data/containerd
+            rm -rf /var/lib/containerd
+            ln -s /mnt/data/containerd /var/lib/containerd
+            systemctl start containerd
+        BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+        - DeviceName: /dev/xvdb
+          Ebs:
+            VolumeSize: !Ref SnapshotSize
+            VolumeType: gp3
+            Encrypted:
+              Fn::If:
+                - Encrypt
+                - true
+                - false
+            KmsKeyId:
+              Fn::If:
+                - UseCustomKMSId
+                - !Ref KMSId
+                - !Ref AWS::NoValue
+            Throughput: 1000
+            Iops: 4000
+            DeleteOnTermination: true
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: !Ref AssociatePublicIpAddress
+            DeviceIndex: "0"
+            Groups:
+              - !If [UseCustomSecurityGroup, !Ref SecurityGroupId, !Ref 'AWS::NoValue']
+            SubnetId: !If [UseCustomSubnet, !Ref SubnetId, !Ref 'AWS::NoValue']
+
+  AL2023Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AL2023LaunchTemplate
+        Version: !GetAtt AL2023LaunchTemplate.LatestVersionNumber
+
+Outputs:
+  InstanceId:
+    Value: !Ref AL2023Instance
+    Description: Instance Id

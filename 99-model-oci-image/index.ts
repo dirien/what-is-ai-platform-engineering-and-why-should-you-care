@@ -14,9 +14,9 @@ const tags = {
     Owner: owner,
 };
 
-// Meta Llama 3 8B Instruct
-const llamaEcr = new EcrRepositoryComponent("meta-llama-3-8b-ecr", {
-    repositoryName: "kserve-models/meta-llama-meta-llama-3-8b-instruct",
+// Qwen2.5-7B-Instruct
+const qwen25Ecr = new EcrRepositoryComponent("qwen25-7b-ecr", {
+    repositoryName: "kserve-models/qwen-qwen2-5-7b-instruct",
     scanOnPush: true,
     imageTagMutability: "MUTABLE",
     imageRetentionCount: 10,
@@ -24,10 +24,10 @@ const llamaEcr = new EcrRepositoryComponent("meta-llama-3-8b-ecr", {
     tags: tags,
 });
 
-const llamaBuilder = new CodeBuildModelBuilderComponent("meta-llama-3-8b-builder", {
-    ecrRepositoryArn: llamaEcr.repositoryArn,
-    ecrRepositoryName: llamaEcr.repositoryName,
-    modelId: "meta-llama/Meta-Llama-3-8B-Instruct",
+const qwen25Builder = new CodeBuildModelBuilderComponent("qwen25-7b-builder", {
+    ecrRepositoryArn: qwen25Ecr.repositoryArn,
+    ecrRepositoryName: qwen25Ecr.repositoryName,
+    modelId: "Qwen/Qwen2.5-7B-Instruct",
     imageTag: "latest",
     hfToken: hfToken,
     tags: tags,
@@ -52,25 +52,7 @@ const qwenBuilder = new CodeBuildModelBuilderComponent("qwen3-8b-builder", {
     tags: tags,
 });
 
-// Qwen2.5-7B-Instruct
-const qwen25Ecr = new EcrRepositoryComponent("qwen25-7b-ecr", {
-    repositoryName: "kserve-models/qwen-qwen2-5-7b-instruct",
-    scanOnPush: true,
-    imageTagMutability: "MUTABLE",
-    imageRetentionCount: 10,
-    forceDelete: true,
-    tags: tags,
-});
-
-const qwen25Builder = new CodeBuildModelBuilderComponent("qwen25-7b-builder", {
-    ecrRepositoryArn: qwen25Ecr.repositoryArn,
-    ecrRepositoryName: qwen25Ecr.repositoryName,
-    modelId: "Qwen/Qwen2.5-7B-Instruct",
-    imageTag: "latest",
-    hfToken: hfToken,
-    tags: tags,
-});
-
+/* TODO(demo-day): Uncomment MIG model images when H100 capacity is available
 // OpenAI GPT-OSS-20B
 const gptOssEcr = new EcrRepositoryComponent("gpt-oss-20b-ecr", {
     repositoryName: "kserve-models/openai-gpt-oss-20b",
@@ -87,19 +69,34 @@ const gptOssBuilder = new CodeBuildModelBuilderComponent("gpt-oss-20b-builder", 
     modelId: "openai/gpt-oss-20b",
     imageTag: "latest",
     hfToken: hfToken,
-    computeType: "BUILD_GENERAL1_LARGE",
+    computeType: "BUILD_GENERAL1_2XLARGE",
     tags: tags,
 });
 
+// Qwen3-30B-A3B (Mixture of Experts)
+const qwen3MoeEcr = new EcrRepositoryComponent("qwen3-30b-a3b-ecr", {
+    repositoryName: "kserve-models/qwen-qwen3-30b-a3b",
+    scanOnPush: true,
+    imageTagMutability: "MUTABLE",
+    imageRetentionCount: 10,
+    forceDelete: true,
+    tags: tags,
+});
+
+const qwen3MoeBuilder = new CodeBuildModelBuilderComponent("qwen3-30b-a3b-builder", {
+    ecrRepositoryArn: qwen3MoeEcr.repositoryArn,
+    ecrRepositoryName: qwen3MoeEcr.repositoryName,
+    modelId: "Qwen/Qwen3-30B-A3B",
+    imageTag: "latest",
+    hfToken: hfToken,
+    computeType: "BUILD_GENERAL1_2XLARGE",
+    tags: tags,
+});
+END TODO(demo-day) */
+
 // Exports
-export const llamaEcrUrl = llamaEcr.repositoryUrl;
-export const llamaCodeBuildProject = llamaBuilder.codeBuildProjectName;
-
-export const qwenEcrUrl = qwenEcr.repositoryUrl;
-export const qwenCodeBuildProject = qwenBuilder.codeBuildProjectName;
-
 export const qwen25EcrUrl = qwen25Ecr.repositoryUrl;
 export const qwen25CodeBuildProject = qwen25Builder.codeBuildProjectName;
 
-export const gptOssEcrUrl = gptOssEcr.repositoryUrl;
-export const gptOssCodeBuildProject = gptOssBuilder.codeBuildProjectName;
+export const qwenEcrUrl = qwenEcr.repositoryUrl;
+export const qwenCodeBuildProject = qwenBuilder.codeBuildProjectName;

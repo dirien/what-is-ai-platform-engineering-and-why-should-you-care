@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pulumi preview --stack dev)",
+      "Bash(pulumi stack output --stack dev)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws codebuild start-build --project-name gpt-oss-20b-builder-project-8204873 --query 'build.id' --output text)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws codebuild start-build --project-name qwen3-30b-a3b-builder-project-fb75659 --query 'build.id' --output text)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws cloudformation describe-stack-events --stack-name AL2023-ebs-snapshot-2464 --region us-east-1 --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' --output table)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws cloudformation describe-stacks --stack-name AL2023-ebs-snapshot-2464 --region us-east-1 --query 'Stacks[0].StackStatus' --output text)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws cloudformation list-stacks --region us-east-1 --query 'StackSummaries[?starts_with\\(StackName,`AL2023-ebs-snapshot`\\)].{Name:StackName,Status:StackStatus,Created:CreationTime}' --output table)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws cloudformation describe-stack-events --stack-name AL2023-ebs-snapshot-5161 --region us-east-1 --query 'StackEvents[*].[LogicalResourceId,ResourceStatus,ResourceStatusReason]' --output table)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws cloudformation describe-stack-events --stack-name AL2023-ebs-snapshot-5161 --region us-east-1 --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' --output table)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws ec2 describe-instance-type-offerings --location-type availability-zone --filters Name=instance-type,Values=p5.4xlarge --region us-east-1 --query 'InstanceTypeOfferings[*].Location' --output table)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws cloudformation describe-stack-events --stack-name AL2023-ebs-snapshot-6178 --region us-east-1 --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' --output table)",
+      "Bash(pulumi env run pulumi-idp/auth -- aws ec2 describe-instance-type-offerings --location-type availability-zone --filters \"Name=instance-type,Values=g6e.*,g6.*,g5.*,p4d.*,p5.*\" --region us-east-1 --query 'InstanceTypeOfferings[*].[InstanceType,Location]' --output table)"
+    ]
+  }
+}

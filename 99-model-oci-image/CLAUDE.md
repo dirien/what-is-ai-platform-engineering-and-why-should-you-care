@@ -112,20 +112,19 @@ pulumi env run pulumi-idp/auth -- aws codebuild start-build \
 
 | Model | Compute Type | ECR Repository | Notes |
 |-------|-------------|----------------|-------|
-| meta-llama/Meta-Llama-3-8B-Instruct | SMALL | kserve-models/meta-llama-meta-llama-3-8b-instruct | 8K native context |
-| Qwen/Qwen3-8B | SMALL | kserve-models/qwen-qwen3-8b | 20K max on A10G (KV cache limit) |
-| Qwen/Qwen2.5-7B-Instruct | SMALL | kserve-models/qwen-qwen2-5-7b-instruct | 32K native context |
+| openai/gpt-oss-20b | 2XLARGE | kserve-models/openai-gpt-oss-20b | Requires Hopper/Blackwell GPUs (H100, B200), special vLLM build (0.10.1+gptoss) |
+| Qwen/Qwen3-30B-A3B | 2XLARGE | kserve-models/qwen-qwen3-30b-a3b | Mixture of Experts model, efficient inference with only 3B active parameters |
 
-**Note:** gpt-oss-20b was removed as it requires a special vLLM build (0.10.1+gptoss) and Hopper/Blackwell GPUs (not compatible with A10G/Ampere architecture).
+**Note:** Both models use `BUILD_GENERAL1_2XLARGE` compute type due to their large size (20B+ parameters). The older models (Meta-Llama-3-8B, Qwen3-8B, Qwen2.5-7B) have been removed.
 
 ## KServe Usage
 
 After building, use the OCI URI in your LLMInferenceService (in `00-infrastructure`):
 
 ```typescript
-const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
-    modelUri: `oci://${ecrBaseUrl}/kserve-models/meta-llama-meta-llama-3-8b-instruct:latest`,
-    modelName: "meta-llama/Meta-Llama-3-8B-Instruct",
+const gptOssModel = new LLMInferenceServiceComponent("gpt-oss-20b", {
+    modelUri: `oci://${ecrBaseUrl}/kserve-models/openai-gpt-oss-20b:latest`,
+    modelName: "openai/gpt-oss-20b",
     storageType: "oci",  // Use OCI storage via Modelcars
     // ... other config
 });
@@ -140,6 +139,17 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
 | **Better scaling** | Image layers shared across pods |
 | **Version control** | Immutable image tags for reproducibility |
 
+## EBS Snapshot Support
+
+Two snapshot scripts are provided for pre-caching container images on GPU nodes:
+
+| Script | AMI Family | Default Instance | Use Case |
+|--------|-----------|-----------------|----------|
+| `snapshot.sh` | Bottlerocket | `m5.large` | Standard GPU nodes (g5, g6) |
+| `snapshot-al2023.sh` | AL2023 NVIDIA | `p5.4xlarge` | H100/MIG nodes (p5, p4d) |
+
+See [EBS Snapshot Guide](./EBS_SNAPSHOT_GUIDE.md) for detailed usage.
+
 ## Files
 
 - `index.ts` - Pulumi infrastructure code with model configurations
@@ -148,3 +158,7 @@ const llama3Model = new LLMInferenceServiceComponent("llama-3-8b-instruct", {
 - `docker/Dockerfile` - Multi-stage Dockerfile
 - `docker/download_model.py` - Python script to download HF models
 - `docker/buildspec.yml` - AWS CodeBuild build specification
+- `snapshot.sh` - EBS snapshot builder for Bottlerocket nodes
+- `snapshot-al2023.sh` - EBS snapshot builder for AL2023 NVIDIA nodes
+- `ebs-snapshot-instance.yaml` - CloudFormation template for Bottlerocket snapshot instance
+- `ebs-snapshot-instance-al2023.yaml` - CloudFormation template for AL2023 NVIDIA snapshot instance

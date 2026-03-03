@@ -341,6 +341,7 @@ export class MaaSComponent extends pulumi.ComponentResource {
                     ],
                     Resource: [
                         "arn:aws:bedrock:*::foundation-model/anthropic.*",
+                        "arn:aws:bedrock:*::foundation-model/amazon.*",
                         "arn:aws:bedrock:*:*:inference-profile/*anthropic*",
                     ],
                 }],
